@@ -1,0 +1,36 @@
+---
+/**
+ * ModuleHeader Component
+ * Standardizes the header section for dashboard modules.
+ * 
+ * Props:
+ * - title: The main heading text.
+ * - description: (Optional) Subtext or description.
+ */
+interface Props {
+    title: string;
+    backUrl?: string;
+    backLabel?: string;
+}
+
+const { title, backUrl, backLabel = "Back" } = Astro.props;
+---
+
+<header class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+    <div class="flex items-center gap-3">
+        <slot name="prefix" />
+        <h2 class="m-0">{title}</h2>
+        <slot name="title-icon" />
+    </div>
+
+    {(backUrl || Astro.slots.has('default')) && (
+        <div class="flex items-center gap-3">
+            <slot />
+            {backUrl && (
+                <a href={backUrl} class="btn btn-primary">
+                    &larr; {backLabel}
+                </a>
+            )}
+        </div>
+    )}
+</header>

@@ -1,0 +1,80 @@
+---
+export const prerender = false;
+/**
+ * Dashboard Route Dispatcher
+ * Catch-all route at /dashboard/[...path]
+ *
+ * Examples:
+ * /dashboard -> module: 'dashboard', path: 'index'
+ * /dashboard/tickets -> module: 'tickets', path: 'index'
+ * /dashboard/tickets/create -> module: 'tickets', path: 'create'
+ */
+import Dashboard from "../../layouts/DashboardLayout.astro";
+import { logger } from "@stimsdesign/core/logger";
+
+const modules = import.meta.glob('../../modules/**/*.astro');
+
+const { path } = Astro.params;
+
+// Split the path into segments
+const segments = path ? path.split('/').filter(Boolean) : [];
+
+// Identified known modules from the filesystem
+// (This is reactive to the modules directory structure)
+const availableModules = [...new Set(Object.keys(modules).map(key => {
+    const parts = key.split('/');
+    return parts[parts.length - 2];
+}))].filter(m => m && m !== 'modules'); // cleanup filter
+
+// Determine module and sub-path
+let module = 'dashboard';
+let subPath = 'index';
+
+if (segments.length > 0) {
+    const firstSegment = segments[0];
+    
+    // If the first segment is a known module, use it
+    if (availableModules.includes(firstSegment)) {
+        module = firstSegment;
+        subPath = segments[1] || 'index';
+    } else {
+        // Otherwise, assume it's a sub-page of the default 'dashboard' module
+        module = 'dashboard';
+        subPath = firstSegment;
+    }
+}
+
+const componentPath = `../../modules/${module}/${subPath}.astro`;
+const nestedComponentPath = `../../modules/${module}/${subPath}/[...path].astro`;
+
+let ModuleComponent;
+
+try {
+    // Priority: 
+    // 1. If we have deep segments (users/permissions/1), prefer the nested route (permissions/[...path].astro)
+    // 2. Exact match (permissions.astro)
+    // 3. Fallback to nested route if exact match doesn't exist (group/[...path].astro)
+    
+    if (segments.length > 2 && modules[nestedComponentPath]) {
+        ModuleComponent = ((await modules[nestedComponentPath]()) as any).default;
+    } else if (modules[componentPath]) {
+        ModuleComponent = ((await modules[componentPath]()) as any).default;
+    } else if (modules[nestedComponentPath]) {
+        ModuleComponent = ((await modules[nestedComponentPath]()) as any).default;
+    } else {
+        logger.warn(`Module or page not found: ${componentPath} or ${nestedComponentPath}`);
+        // If not found, fallback to dashboard index if we're not already there
+        if (module === 'dashboard' && subPath === 'index') {
+            return Astro.redirect("/"); // Fallback to site root or error
+        }
+        return Astro.redirect("/dashboard");
+    }
+} catch (e) {
+    logger.error(`Failed to load module: ${module}/${subPath}`, e);
+    return Astro.redirect("/dashboard");
+}
+---
+
+<Dashboard>
+    <ModuleComponent />
+</Dashboard>

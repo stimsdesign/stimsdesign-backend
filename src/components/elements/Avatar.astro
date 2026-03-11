@@ -1,0 +1,54 @@
+---
+interface Props {
+    user: {
+        name: string;
+        image?: string | null;
+        custom_image?: string | null;
+        avatar_bg?: string | null;
+        avatar_fg?: string | null;
+    };
+    /**
+     * Optional explicit dimensions, e.g. "80px".
+     * If not provided, it relies on the global CSS defaults.
+     */
+    size?: string;
+    /**
+     * Optional ID for the image and initials elements (used for previewing in edit forms).
+     */
+    previewIdPrefix?: string;
+}
+
+const { user, size, previewIdPrefix } = Astro.props;
+
+function getUserInitials(name: string) {
+    if (!name) return 'U';
+    const parts = name.split(' ').filter(Boolean);
+    if (parts.length > 1) {
+        return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+    }
+    return (parts[0]?.[0] || 'U').toUpperCase();
+}
+
+const initials = getUserInitials(user.name);
+
+// Fallbacks are conceptually not needed dynamically here if the DB enforces them,
+// but they act as a safety net if a partial object is passed without them.
+const avatarBg = user.avatar_bg || 'var(--color-background)';
+const avatarFg = user.avatar_fg || 'var(--color-foreground)';
+
+const sizeStyle = size ? `width: ${size}; height: ${size};` : '';
+
+const imgId = previewIdPrefix ? `${previewIdPrefix}-img` : undefined;
+const initialsId = previewIdPrefix ? `${previewIdPrefix}-initials` : undefined;
+
+const finalImage = user.custom_image || user.image;
+---
+{finalImage ? (
+    <div class="avatar-wrapper" style={sizeStyle}>
+        <img id={imgId} class="avatar-img" src={finalImage} alt={user.name} style={`display: block; background-color: ${avatarBg}; border: 2px solid ${avatarFg};`} />
+    </div>
+) : (
+    <div class="avatar-wrapper" style={sizeStyle}>
+        <span id={initialsId} class="initials-avatar" style={`display: flex; background-color: ${avatarBg}; color: ${avatarFg}; border: 2px solid ${avatarFg};`}>{initials}</span>
+    </div>
+)}

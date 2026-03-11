@@ -1,0 +1,167 @@
+---
+/**
+ * Toast Component
+ * Centralizes the toast notification system for the dashboard.
+ * Includes smooth transitions, confirmation support, and theme-matching designs.
+ */
+---
+
+<!-- Global Toast Container -->
+<div id="stims-toast-container" class="fixed inset-0 z-10000 pointer-events-none grid place-items-center p-4" style="left: 0; top: 0; width: 100vw; height: 100vh;"></div>
+
+<script>
+    // Global Toast Handler
+    (window as any).stimsToast = {
+        _activeToast: null,
+        _clearActive: function(immediate = false) {
+            const container = document.getElementById('stims-toast-container');
+            if (immediate && container) {
+                container.innerHTML = '';
+                this._activeToast = null;
+                return;
+            }
+            if (this._activeToast) {
+                const el = this._activeToast;
+                el.classList.add('opacity-0', 'scale-95', 'pointer-events-none');
+                this._activeToast = null;
+                setTimeout(() => { if (el.parentNode) el.remove(); }, 300);
+            }
+        },
+        show: function(message: string, type = 'success', duration = 3000, customIcon = null) {
+            // Force clear previous if new one comes in
+            this._clearActive(true);
+            const container = document.getElementById('stims-toast-container');
+            if (!container) return;
+
+            const id = 'toast-' + Math.random().toString(36).substring(2, 11);
+            const isError = type === 'error';
+            const isWarning = type === 'warning';
+            
+            let borderColor = 'border-green-500/50';
+            let iconColor = 'text-green-400 bg-green-500/20';
+            let defaultIcon = '<svg class="w-5 h-5" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 20 20"><path d="M10 .5a9.5 9.5 0 1 0 9.5 9.5A9.51 9.51 0 0 0 10 .5Zm3.707 8.207-4 4a1 1 0 0 1-1.414 0l-2-2a1 1 0 0 1 1.414-1.414L9 10.586l3.293-3.293a1 1 0 0 1 1.414 1.414Z"/></svg>';
+
+            if (isError) {
+                borderColor = 'border-red-500/50';
+                iconColor = 'text-red-400 bg-red-500/20';
+                defaultIcon = '<svg class="w-5 h-5" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 20 20"><path d="M10 .5a9.5 9.5 0 1 0 9.5 9.5A9.51 9.51 0 0 0 10 .5Zm3.707 11.793a1 1 0 1 1-1.414 1.414L10 11.414l-2.293 2.293a1 1 0 0 1-1.414-1.414L8.586 10 6.293 7.707a1 1 0 0 1 1.414-1.414L10 8.586l2.293-2.293a1 1 0 0 1 1.414 1.414L11.414 10l2.293 2.293Z"/></svg>';
+            } else if (isWarning) {
+                borderColor = 'border-orange-500/50';
+                iconColor = 'text-orange-400 bg-orange-500/20';
+                defaultIcon = '<svg class="w-5 h-5" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 20 20"><path d="M10 .5a9.5 9.5 0 1 0 9.5 9.5A9.51 9.51 0 0 0 10 .5ZM10 15a1 1 0 1 1 0-2 1 1 0 0 1 0 2Zm1-4a1 1 0 0 1-2 0V6a1 1 0 0 1 2 0v5Z"/></svg>';
+            }
+
+            const toastHtml = `
+                <div id="${id}" class="col-start-1 row-start-1 pointer-events-auto flex items-center w-full max-w-xs p-4 text-gray-300 bg-gray-900/95 backdrop-blur-sm rounded-lg shadow-2xl border ${borderColor} transition-all duration-300" role="alert">
+                    <div class="inline-flex items-center justify-center shrink-0 w-8 h-8 ${iconColor} rounded-lg">
+                        ${customIcon || defaultIcon}
+                        <span class="sr-only">${type} icon</span>
+                    </div>
+                    <div class="ms-3 text-sm font-medium text-white">${message}</div>
+                    <button type="button" class="ms-auto -mx-1.5 -my-1.5 bg-transparent text-gray-500 hover:text-white rounded-lg p-1.5 hover:bg-gray-800 inline-flex items-center justify-center h-8 w-8" data-dismiss-target="#${id}" aria-label="Close">
+                        <span class="sr-only">Close</span>
+                        <svg class="w-3 h-3" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 14 14">
+                            <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m1 1 6 6m0 0 6 6M7 7l6-6M7 7l-6 6"/>
+                        </svg>
+                    </button>
+                </div>
+            `;
+
+            const temp = document.createElement('div');
+            temp.innerHTML = toastHtml;
+            const toastEl = temp.firstElementChild as HTMLElement;
+            container.appendChild(toastEl);
+            this._activeToast = toastEl;
+
+            // Add dismiss listener
+            const closeBtn = toastEl.querySelector('[data-dismiss-target]');
+            closeBtn?.addEventListener('click', () => {
+                toastEl.classList.add('opacity-0', 'scale-95');
+                setTimeout(() => {
+                    if (toastEl.parentNode) toastEl.remove();
+                    if (this._activeToast === toastEl) this._activeToast = null;
+                }, 300);
+            });
+
+            if (duration > 0) {
+                setTimeout(() => {
+                    if (toastEl.parentNode && this._activeToast === toastEl) {
+                        toastEl.classList.add('opacity-0', 'scale-95');
+                        setTimeout(() => {
+                            if (toastEl.parentNode) toastEl.remove();
+                            if (this._activeToast === toastEl) this._activeToast = null;
+                        }, 300);
+                    }
+                }, duration);
+            }
+        },
+        confirm: function(message: string, onConfirm: () => void, onCancel: () => void = () => {}, type = 'warning', customIcon = null) {
+            this._clearActive(true);
+            const container = document.getElementById('stims-toast-container');
+            if (!container) return;
+
+            const id = 'confirm-' + Math.random().toString(36).substring(2, 11);
+            const isError = type === 'error';
+            const isSuccess = type === 'success';
+            
+            let borderColor = 'border-orange-500/50';
+            let iconColor = 'text-orange-400 bg-orange-500/20';
+            let btnClass = 'bg-orange-600 hover:bg-orange-700 focus:ring-orange-800';
+            let defaultIcon = '<svg class="w-5 h-5" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 20 20"><path d="M10 .5a9.5 9.5 0 1 0 9.5 9.5A9.51 9.51 0 0 0 10 .5ZM10 15a1 1 0 1 1 0-2 1 1 0 0 1 0 2Zm1-4a1 1 0 0 1-2 0V6a1 1 0 0 1 2 0v5Z"/></svg>';
+
+            if (isError) {
+                borderColor = 'border-red-500/50';
+                iconColor = 'text-red-400 bg-red-500/20';
+                btnClass = 'bg-red-600 hover:bg-red-700 focus:ring-red-800';
+                defaultIcon = '<svg class="w-5 h-5" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 20 20"><path d="M10 .5a9.5 9.5 0 1 0 9.5 9.5A9.51 9.51 0 0 0 10 .5Zm3.707 11.793a1 1 0 1 1-1.414 1.414L10 11.414l-2.293 2.293a1 1 0 0 1-1.414-1.414L8.586 10 6.293 7.707a1 1 0 0 1 1.414-1.414L10 8.586l2.293-2.293a1 1 0 0 1 1.414 1.414L11.414 10l2.293 2.293Z"/></svg>';
+            } else if (isSuccess) {
+                borderColor = 'border-green-500/50';
+                iconColor = 'text-green-400 bg-green-500/20';
+                btnClass = 'bg-green-600 hover:bg-green-700 focus:ring-green-800';
+                defaultIcon = '<svg class="w-5 h-5" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 20 20"><path d="M10 .5a9.5 9.5 0 1 0 9.5 9.5A9.51 9.51 0 0 0 10 .5Zm3.707 8.207-4 4a1 1 0 0 1-1.414 0l-2-2a1 1 0 0 1 1.414-1.414L9 10.586l3.293-3.293a1 1 0 0 1 1.414 1.414Z"/></svg>';
+            }
+
+            const confirmHtml = `
+                <div id="${id}" class="col-start-1 row-start-1 pointer-events-auto flex flex-col items-center w-full max-w-xs p-5 text-gray-300 bg-gray-900/95 backdrop-blur-sm rounded-lg shadow-2xl border ${borderColor} transition-all duration-300" role="alert">
+                    <div class="flex items-center w-full mb-4">
+                        <div class="inline-flex items-center justify-center shrink-0 w-10 h-10 ${iconColor} rounded-lg">
+                            ${customIcon || defaultIcon}
+                        </div>
+                        <div class="ms-3 text-sm font-semibold text-white">${message}</div>
+                    </div>
+                    <div class="flex items-center justify-end w-full gap-3">
+                        <button type="button" class="px-4 py-2 text-xs font-bold text-center text-white ${btnClass} rounded-lg focus:ring-4 focus:outline-none transition-colors" id="${id}-confirm">Confirm</button>
+                        <button type="button" class="px-4 py-2 text-xs font-bold text-center text-gray-300 bg-gray-800 rounded-lg hover:bg-gray-700 focus:ring-4 focus:outline-none focus:ring-gray-800 transition-colors" id="${id}-cancel">Cancel</button>
+                    </div>
+                </div>
+            `;
+
+            const temp = document.createElement('div');
+            temp.innerHTML = confirmHtml;
+            const confirmEl = temp.firstElementChild as HTMLElement;
+            container.appendChild(confirmEl);
+            this._activeToast = confirmEl;
+
+            const confirmBtn = confirmEl.querySelector(`#${id}-confirm`);
+            const cancelBtn = confirmEl.querySelector(`#${id}-cancel`);
+
+            const cleanup = () => {
+                confirmEl.classList.add('opacity-0', 'scale-95');
+                setTimeout(() => {
+                    if (confirmEl.parentNode) confirmEl.remove();
+                    if (this._activeToast === confirmEl) this._activeToast = null;
+                }, 300);
+            };
+
+            confirmBtn?.addEventListener('click', () => {
+                cleanup();
+                onConfirm();
+            });
+
+            cancelBtn?.addEventListener('click', () => {
+                cleanup();
+                if (onCancel) onCancel();
+            });
+        }
+    };
+</script>

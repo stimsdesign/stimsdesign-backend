@@ -1,0 +1,21 @@
+---
+export const prerender = false;
+/**
+ * Home Module
+ * A basic greeting module that displays user role and name.
+ *
+ * Related files:
+ *   - src/pages/dashboard/[module]/[...path].astro (Dispatcher)
+ *   - src/layouts/DashboardLayout.astro
+ */
+export const sortOrder = 0;
+export const menuLabel = "Overview";
+const user = Astro.locals.user;
+const displayName = user?.name || "Guest";
+const role = (user as any)?.role || "Unassigned";
+---
+
+<div class="dashboard-module module-splash">
+    <h2>Dashboard</h2>
+    <p class="info">Hello, {displayName}. You are a {role}.</p>
+</div>

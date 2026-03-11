@@ -1,0 +1,129 @@
+---
+/**
+ * Tabs Component
+ * A reusable tabbed interface that matches Flowbite's design but uses custom logic.
+ * 
+ * Usage:
+ * <Tabs tabs={[
+ *   { id: 'tab1', label: 'Tab 1', active: true },
+ *   { id: 'tab2', label: 'Tab 2' }
+ * ]}>
+ *   <div id="tab1-content" slot="tab1">Content 1</div>
+ *   <div id="tab2-content" slot="tab2">Content 2</div>
+ * </Tabs>
+ */
+
+interface Tab {
+    id: string;
+    label: string;
+    active?: boolean;
+}
+
+interface Props {
+    tabs: Tab[];
+    id?: string;
+}
+
+const { tabs, id = "dashboard-tabs" } = Astro.props;
+---
+
+<div class="tabs-wrapper" id={id}>
+    <div class="mb-4">
+        <ul class="dashboard-tabs">
+            {tabs.map(tab => (
+                <li>
+                    <button 
+                        class={`${tab.active && 'active'}`}
+                        id={`${tab.id}-tab`} 
+                        data-tab-target={tab.id}
+                        type="button" 
+                        role="tab" 
+                        aria-controls={tab.id} 
+                        aria-selected={tab.active ? "true" : "false"}
+                    >
+                        {tab.label}
+                    </button>
+                </li>
+            ))}
+        </ul>
+    </div>
+
+    <div class="tabs-content">
+        <slot />
+    </div>
+</div>
+
+<script>
+    function setupTabs() {
+        const wrappers = document.querySelectorAll('.tabs-wrapper');
+        
+        wrappers.forEach(wrapper => {
+            const buttons = wrapper.querySelectorAll('button[data-tab-target]');
+            const panels = wrapper.querySelectorAll('[data-tab-content]');
+
+            buttons.forEach(button => {
+                button.addEventListener('click', () => {
+                    const targetId = (button as HTMLElement).dataset.tabTarget;
+                    
+                    // Update buttons
+                    buttons.forEach(btn => {
+                        const btnTarget = (btn as HTMLElement).dataset.tabTarget;
+                        const isTarget = btnTarget === targetId;
+                        btn.setAttribute('aria-selected', isTarget ? 'true' : 'false');
+                        if (isTarget) {
+                            btn.classList.add('active');
+                        } else {
+                            btn.classList.remove('active');
+                        }
+                    });
+
+                    // Update panels
+                    panels.forEach(panel => {
+                        const panelId = (panel as HTMLElement).dataset.tabContent;
+                        if (panelId === targetId) {
+                            panel.classList.remove('hidden');
+                        } else {
+                            panel.classList.add('hidden');
+                        }
+                    });
+                });
+            });
+        });
+    }
+
+    // Run on initial load and after view transitions
+    document.addEventListener('astro:page-load', setupTabs);
+</script>
+
+<style>
+    ul.dashboard-tabs {
+        display: flex;
+        gap: 0;
+        border-bottom: 1px solid var(--color-secondary);
+    }
+
+    ul.dashboard-tabs li button {
+        padding: 0.5rem 1rem;
+        font-size: var(--size-lg);
+        cursor: pointer;
+        color: var(--color-foreground-dark);
+        font-weight: var(--weight-regular);
+        border-radius: 0;
+    }
+
+    ul.dashboard-tabs li button.active {
+        text-shadow: 1px 1px 4px var(--color-secondary);
+        color: white;
+        border-bottom: 1px solid white;
+    }
+
+
+
+    /* Ensure the active color matches our project theme */
+    .text-primary {
+        color: var(--color-primary, #3b82f6);
+    }
+    .border-primary {
+        border-color: var(--color-primary, #3b82f6);
+    }
+</style>

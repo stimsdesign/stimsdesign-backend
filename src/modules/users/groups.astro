@@ -1,0 +1,472 @@
+---
+/**
+ * Users Module - User Groups
+ * Manage organizational groups and user memberships.
+ */
+
+export const prerender = false;
+
+// Module Menu Configuration
+export const sortOrder = 3;
+export const activeMatch = "/dashboard/users/group/";
+export const menuLabel = "Groups";
+
+import { db, getCachedQuery, CACHE_TTL } from "@stimsdesign/core/db.ts";
+import ModuleHeader from "../../components/layout/ModuleHeader.astro";
+import Datatable from "../../components/interface/Datatable.astro";
+import TableActions from "../../components/interface/TableActions.astro";
+import FormFeedback from "../../components/forms/FormFeedback.astro";
+
+interface GroupRow {
+    id: string;
+    name: string;
+    description: string | null;
+    minRoleWeight: number;
+    createdAt: Date;
+    user_count: number;
+}
+
+interface UserSummary {
+    id: string;
+    name: string;
+    email: string;
+    active_role_weight: number;
+}
+
+// Fetch all groups and user counts
+const groups = await getCachedQuery('users:groups:extended', CACHE_TTL, async () => {
+    const { rows } = await db.query<GroupRow>(`
+        SELECT 
+            g.id, 
+            g.name, 
+            g.description, 
+            g."minRoleWeight",
+            g."createdAt",
+            COUNT(ug."userId")::int as user_count
+        FROM "groups" g
+        LEFT JOIN "user_groups" ug ON g.id = ug."groupId"
+        GROUP BY g.id
+        ORDER BY g.name ASC
+    `);
+    return rows;
+});
+
+// Fetch all roles for the dropdown (exclude Superadmin) - Bumped cache key to v2
+const allRoles = await getCachedQuery('users:roles:form:v2', CACHE_TTL, async () => {
+    const { rows } = await db.query('SELECT id, name, weight FROM "roles" WHERE name != \'Superadmin\' AND name != \'User\' ORDER BY weight ASC');
+    return rows;
+});
+
+// Fetch users for the "Quick Add" tool with simple RBAC
+const allUsers = await getCachedQuery('users:list:summary:weights', CACHE_TTL, async () => {
+    const { rows } = await db.query<UserSummary>(`
+        SELECT 
+            u.id, 
+            u.name, 
+            u.email,
+            COALESCE(MIN(r.weight), 99) as active_role_weight
+        FROM "user" u
+        LEFT JOIN "user_roles" ur ON u.id = ur."userId"
+        LEFT JOIN "roles" r ON ur."roleId" = r.id
+        GROUP BY u.id
+        ORDER BY u.name ASC
+    `);
+    return rows;
+});
+
+---
+
+<div class="groups-module">
+    <ModuleHeader title="User Groups" />
+
+    <!-- Forms Container -->
+    <!-- Create Group Form -->
+    <div class="form-container">
+        <form id="create-group-form">
+            <div class="form-section">
+                <h3>Create New Group</h3>
+                <div class="form-grid">
+                    <div class="input-group">
+                        <label for="groupName">Group Name</label>
+                        <input type="text" id="groupName" name="name" placeholder="e.g. Marketing Team" required />
+                    </div>
+                    <div class="input-group">
+                        <label for="groupDesc">Description</label>
+                        <input type="text" id="groupDesc" name="description" placeholder="Description of the group..." />
+                    </div>
+                </div>
+                
+                <div class="form-grid mt-4">
+                    <div class="input-group">
+                        <label for="minRoleWeight">Minimum Role Criteria</label>
+                        <p class="small">Limits membership to users with this role (or higher).</p>
+                        <select id="minRoleWeight" name="minRoleWeight" required>
+                            <option value="99" selected>User</option>
+                            {allRoles.map((r: any) => <option value={r.weight}>{r.name}</option>)}
+                        </select>
+                    </div>
+                </div>
+                <div class="form-grid mt-4">
+                    <div class="input-group">
+                         <label for="initialRoleId">Initial Roles (Optional)</label>
+                         <p class="small">Add all users with these roles.</p>
+                         <select id="initialRoleId" name="_initialRoleId_selector">
+                             <option value="">- Add Role -</option>
+                             {allRoles.map((r: any) => <option value={r.id} data-role-weight={r.weight}>{r.name}</option>)}
+                         </select>
+                         <div id="selected-roles" class="selected-options"></div>
+                    </div>
+                    <div class="input-group">
+                        <label for="userId">Initial Members (Optional)</label>
+                        <p class="small">Select users to add immediately.</p>
+                        <select id="userId" name="_userId_selector">
+                            <option value="">- Add User -</option>
+                            {allUsers.map((u: UserSummary) => <option value={u.id} data-user-weight={u.active_role_weight}>{u.name} ({u.email})</option>)}
+                        </select>
+                        <div id="selected-users" class="selected-options"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary">Create Group</button>
+            </div>
+            <FormFeedback id="create-feedback" />
+        </form>
+    </div>
+
+    <!-- Groups Table -->
+    <Datatable id="groups-registry-table" searchable={true} sortable={true} perPage={10}>
+        <table id="groups-registry-table">
+            <thead>
+                <tr>
+                    <th class="preferred asc">
+                        <span class="flex items-center">Group Name</span>
+                    </th>
+                    <th>
+                        <span class="flex items-center">Description</span>
+                    </th>
+                    <th>
+                        <span class="flex items-center">Members</span>
+                    </th>
+                    <th>
+                        <span class="flex items-center">Created</span>
+                    </th>
+                    <th data-sortable="false">
+                        <span class="flex items-center">Actions</span>
+                    </th>
+                </tr>
+            </thead>
+            <tbody>
+                {groups.map((group: GroupRow) => (
+                    <tr>
+                        <td>
+                            <a href={`/dashboard/users/group/${encodeURIComponent(group.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''))}`}>
+                                <strong>{group.name}</strong>
+                            </a>
+                        </td>
+                        <td>
+                            <span class="small">{group.description || "-"}</span>
+                        </td>
+                        <td>
+                            {group.user_count} Users
+                        </td>
+                        <td>
+                            {new Date(group.createdAt).toLocaleDateString()}
+                        </td>
+                        <td>
+                            <TableActions 
+                                editUrl={`/dashboard/users/group/${encodeURIComponent(group.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''))}?edit=true`}
+                                deleteId={group.id}
+                                deleteClass="delete-group"
+                            />
+                        </td>
+                    </tr>
+                ))}
+            </tbody>
+        </table>
+    </Datatable>
+</div>
+
+<style>
+    /* Utility for spacing */
+    .mb-8 { margin-bottom: 2rem; }
+    .pb-8 { padding-bottom: 2rem; }
+    .border-b { border-bottom-width: 1px; }
+    .border-white\/10 { border-color: rgba(255, 255, 255, 0.1); }
+
+    /* Multi-select Styles */
+    .selected-options {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin-top: 0.5rem;
+        min-height: 2rem; /* Reserve space */
+    }
+    
+    .tag {
+        display: inline-flex;
+        align-items: center;
+        background: rgba(255, 255, 255, 0.1);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: 4px;
+        padding: 0.25rem 0.5rem;
+        font-size: 0.875rem;
+        color: var(--color-foreground);
+    }
+
+    .tag .remove-tag {
+        margin-left: 0.5rem;
+        cursor: pointer;
+        color: #fca5a5; /* Light red */
+        font-weight: bold;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 16px;
+        height: 16px;
+    }
+    
+    .tag .remove-tag:hover {
+        color: #f87171;
+    }
+</style>
+
+<script>
+    import { actions } from "astro:actions";
+
+    const refreshGroups = async () => {
+        try {
+            const response = await fetch(window.location.href);
+            const text = await response.text();
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(text, 'text/html');
+
+            // 1. Refresh Table Container
+            const newTableContainer = doc.querySelector('div[data-datatable-id="groups-registry-table"]');
+            const currentTableContainer = document.querySelector('div[data-datatable-id="groups-registry-table"]');
+
+            if (newTableContainer && currentTableContainer) {
+                currentTableContainer.replaceWith(newTableContainer);
+                document.dispatchEvent(new CustomEvent('datatable:init'));
+                bindTableActions();
+            }
+
+            // 2. Refresh initial user select in Create Form may not be strictly necessary if we just reload
+            // But if we want to keep it dynamic without full page reload:
+            const newSelect = doc.querySelector('select[name="userId"]');
+            const currentSelect = document.querySelector('select[name="userId"]');
+            
+            if (newSelect && currentSelect) {
+                // We can't just swap innerHTML because options are dynamically filtered by script
+                // But if we want to keep it dynamic without full page reload:
+                currentSelect.innerHTML = newSelect.innerHTML;
+                bindGroupSelectLogic();
+            }
+
+        } catch (e) {
+            console.error("Failed to refresh groups", e);
+        }
+    };
+
+    document.addEventListener('astro:page-load', () => {
+        bindTableActions();
+    });
+
+    const createForm = document.getElementById('create-group-form') as HTMLFormElement;
+    
+    const createFeedback = document.getElementById('create-feedback');
+
+    // Helper for feedback
+    const showFeedback = (el: HTMLElement | null, type: 'success' | 'error' | 'info', msg: string) => {
+        if (!el) return;
+        el.style.display = 'block';
+        if (type === 'success') {
+            el.className = 'form-feedback feedback success';
+        } else if (type === 'error') {
+            el.className = 'form-feedback feedback error';
+        } else { // 'info'
+            el.className = 'form-feedback feedback loading';
+        }
+        el.textContent = msg;
+    };
+
+
+    // Create Group
+    // Create Group (and optionally add user)
+    createForm?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const formData = new FormData(createForm);
+        showFeedback(createFeedback, 'info', 'Creating group...');
+
+        const { data: result, error } = await actions.users.createGroup(formData);
+
+        if (error) {
+            showFeedback(createFeedback, 'error', `Error: ${error.message}`);
+        } else if (result?.success) {
+            showFeedback(createFeedback, 'success', 'Group created successfully!');
+            createForm.reset();
+            // Clear tags
+            document.getElementById('selected-users')!.innerHTML = '';
+            document.getElementById('selected-roles')!.innerHTML = '';
+            
+            // Trigger logic update to reset filters
+            bindGroupSelectLogic();
+            await refreshGroups();
+        }
+    });
+
+    function bindTableActions() {
+        // Delete Group
+        document.querySelectorAll('.delete-group').forEach(btn => {
+            btn.replaceWith(btn.cloneNode(true));
+        });
+
+        document.querySelectorAll('.delete-group').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                const btnEl = e.currentTarget as HTMLElement;
+                const id = btnEl.dataset.id;
+                const icon = btnEl.querySelector('svg')?.outerHTML;
+                (window as any).stimsToast.confirm('Are you sure you want to delete this group? This action cannot be undone.', async () => {
+                    const { error } = await actions.users.deleteGroup({ id: id! });
+                    if (error) {
+                        (window as any).stimsToast.show(`Error deleting group: ${error.message}`, 'error');
+                    } else {
+                        (window as any).stimsToast.show('Group deleted successfully!');
+                        await refreshGroups();
+                    }
+                }, null, 'warning', icon);
+            });
+        });
+    }
+
+    function bindGroupSelectLogic() {
+        // Unified Form: Min Role controls User Select AND Role Select
+        const minRoleSelect = document.getElementById('minRoleWeight') as HTMLSelectElement;
+        const userSelect = document.getElementById('userId') as HTMLSelectElement;
+        const roleSelect = document.getElementById('initialRoleId') as HTMLSelectElement;
+
+        if (!minRoleSelect || !userSelect || !roleSelect) return;
+
+        const filterOptions = () => {
+            const criteriaWeight = parseInt(minRoleSelect.value || '99');
+            
+            const selectedRoleValues = Array.from(document.querySelectorAll('#selected-roles .tag input')).map((el: any) => el.value);
+            const selectedUserValues = Array.from(document.querySelectorAll('#selected-users .tag input')).map((el: any) => el.value);
+
+            // --- Filter Roles ---
+             if (!(roleSelect as any)._allOptions) {
+                (roleSelect as any)._allOptions = Array.from(roleSelect.options).slice(1);
+            }
+            const allRoleOptions = (roleSelect as any)._allOptions as HTMLOptionElement[];
+
+            roleSelect.innerHTML = '<option value="">- Add Role -</option>';
+            allRoleOptions.forEach(opt => {
+                const roleWeight = parseInt(opt.getAttribute('data-role-weight') || '99');
+                // Role must be stronger or equal to criteria (weight <= criteria)
+                if (roleWeight <= criteriaWeight) {
+                    const clone = opt.cloneNode(true) as HTMLOptionElement;
+                    if (selectedRoleValues.includes(opt.value)) {
+                        clone.hidden = true;
+                        clone.disabled = true;
+                    }
+                    roleSelect.appendChild(clone);
+                } else {
+                    if (selectedRoleValues.includes(opt.value)) {
+                        const tagInput = document.querySelector(`#selected-roles .tag input[value="${opt.value}"]`);
+                        if (tagInput) tagInput.parentElement?.remove();
+                    }
+                }
+            });
+
+            // --- Filter Users ---
+             if (!(userSelect as any)._allOptions) {
+                (userSelect as any)._allOptions = Array.from(userSelect.options).slice(1);
+            }
+            const allUserOptions = (userSelect as any)._allOptions as HTMLOptionElement[];
+
+            userSelect.innerHTML = '<option value="">- Add User -</option>';
+            allUserOptions.forEach(opt => {
+                const userWeight = parseInt(opt.getAttribute('data-user-weight') || '99');
+                if (userWeight <= criteriaWeight) {
+                    const clone = opt.cloneNode(true) as HTMLOptionElement;
+                    if (selectedUserValues.includes(opt.value)) {
+                        clone.hidden = true;
+                        clone.disabled = true;
+                    }
+                    userSelect.appendChild(clone);
+                } else {
+                    if (selectedUserValues.includes(opt.value)) {
+                        const tagInput = document.querySelector(`#selected-users .tag input[value="${opt.value}"]`);
+                        if (tagInput) tagInput.parentElement?.remove();
+                    }
+                }
+            });
+        };
+
+        minRoleSelect.removeEventListener('change', filterOptions);
+        minRoleSelect.addEventListener('change', filterOptions);
+        
+        // Initial run
+        filterOptions();
+
+        // Bind Multi-Select Logic (only once)
+        if (!(userSelect as any)._multiSelectBound) {
+            bindMultiSelect('initialRoleId', 'selected-roles', 'initialRoleIds');
+            bindMultiSelect('userId', 'selected-users', 'userIds');
+            (userSelect as any)._multiSelectBound = true;
+        }
+    }
+
+    function bindMultiSelect(selectId: string, containerId: string, inputName: string) {
+        const select = document.getElementById(selectId) as HTMLSelectElement;
+        const container = document.getElementById(containerId);
+        if (!select || !container) return;
+
+        // Clear previous listeners to avoid dupes if page-load fires multiple times or we re-bind
+        // (Native addEventListener handles dupes if same function, but inline anonymous functions are new refs)
+        // For simplicity in this script module, we'll assign to onchange to replace.
+        select.onchange = () => {
+             const value = select.value;
+             if (!value) return;
+
+             const option = select.options[select.selectedIndex];
+             const text = option.text;
+
+             // Check if already selected
+             if (container.querySelector(`input[value="${value}"]`)) {
+                 select.value = ""; // Reset
+                 return;
+             }
+
+             // Hide the selected option
+             option.hidden = true;
+             option.disabled = true;
+
+             // Create Tag
+             const tag = document.createElement('span');
+             tag.className = 'tag';
+             tag.innerHTML = `
+                ${text}
+                <input type="hidden" name="${inputName}" value="${value}" />
+                <span class="remove-tag" title="Remove">&times;</span>
+             `;
+
+             // Remove Logic
+             tag.querySelector('.remove-tag')?.addEventListener('click', () => {
+                 tag.remove();
+                 const currentOpt = select.querySelector(`option[value="${value}"]`) as HTMLOptionElement;
+                 if (currentOpt) {
+                     currentOpt.hidden = false;
+                     currentOpt.disabled = false;
+                 }
+             });
+
+             container.appendChild(tag);
+             select.value = ""; // Reset select
+        };
+    }
+
+    document.addEventListener('astro:page-load', () => {
+        bindGroupSelectLogic();
+    });
+</script>

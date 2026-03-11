@@ -1,0 +1,511 @@
+---
+/**
+ * Users Module - Overview
+ * Lists all users in the system with roles, groups, and quick actions.
+ *
+ * Related files:
+ *   - src/modules/users/index.astro
+ *   - src/actions.ts
+ *   - src/modules/users/actions.ts
+ */
+
+export const prerender = false;
+
+// Module Menu Configuration
+export const sortOrder = 0;
+export const menuOrder = 1;
+export const menuLabel = "All Users";
+export const activeMatch = "/dashboard/users/user/";
+
+import EyeIcon from "../../icons/eye.svg";
+import EyeOffIcon from "../../icons/eye-off.svg";
+import Avatar from "../../components/elements/Avatar.astro";
+import ModuleHeader from "../../components/layout/ModuleHeader.astro";
+import StatusBadge from "../../components/elements/StatusBadge.astro";
+import TableActions from "../../components/interface/TableActions.astro";
+import FormFeedback from "../../components/forms/FormFeedback.astro";
+
+// Open DB Pool with Caching Option (see utils/db.ts for implementation details)
+import { db, getCachedQuery, CACHE_TTL } from "@stimsdesign/core/db.ts";
+import { Auth } from "../../utils/auth";
+import Datatable from "../../components/interface/Datatable.astro";
+
+// Fetch users with their roles and groups
+interface UserRow {
+    id: string;
+    name: string;
+    email: string;
+    emailVerified: boolean;
+    createdAt: Date;
+    has_roles: boolean;
+    roles: string[];
+    groups: string[];
+    image: string | null;
+    custom_image: string | null;
+    avatar_bg: string | null;
+    avatar_fg: string | null;
+}
+
+// Simple summary for roles to populate the "Add User" form
+interface RoleSummary {
+    id: string;
+    name: string;
+}
+
+// Simple summary for groups to populate the "Add User" form
+interface GroupSummary {
+    id: string;
+    name: string;
+}
+
+// Main query to fetch users along with their roles and groups in a single query
+const { rows: users } = await db.query<UserRow>(`
+    SELECT 
+        u.id, 
+        u.name, 
+        u.email, 
+        u."emailVerified", 
+        u."createdAt",
+        u.image,
+        u.custom_image,
+        u.avatar_bg,
+        u.avatar_fg,
+        (SELECT EXISTS(SELECT 1 FROM "user_roles" WHERE "userId" = u.id)) as has_roles,
+        ARRAY(
+            SELECT r.name
+            FROM "user_roles" ur
+            JOIN "roles" r ON ur."roleId" = r.id
+            WHERE ur."userId" = u.id
+            ORDER BY r.weight ASC
+        ) as roles,
+        ARRAY(
+            SELECT g.name
+            FROM "user_groups" ug
+            JOIN "groups" g ON ug."groupId" = g.id
+            WHERE ug."userId" = u.id
+            ORDER BY g.name ASC
+        ) as groups
+    FROM "user" u
+    ORDER BY u."createdAt" DESC
+`);
+
+const rolesData = await getCachedQuery('users:roles:form', CACHE_TTL, async () => {
+    const { rows } = await db.query("SELECT id, name FROM \"roles\" WHERE name NOT IN ('Superadmin', 'User') ORDER BY weight ASC");
+    return rows;
+});
+
+// For Superadmins, let them see the Superadmin role as an option
+const session = await Auth.api.getSession({ headers: Astro.request.headers });
+const isSuperadmin = session?.user.role?.toLowerCase() === 'superadmin';
+
+let roles = [...rolesData];
+
+if (isSuperadmin) {
+    const { rows: saRole } = await db.query("SELECT id, name FROM \"roles\" WHERE name = 'Superadmin'");
+    if (saRole.length > 0) {
+        roles = [saRole[0], ...roles];
+    }
+}
+const groups = await getCachedQuery('users:groups:list', CACHE_TTL, async () => {
+    const { rows } = await db.query('SELECT id, name FROM "groups" ORDER BY name ASC');
+    return rows;
+});
+
+//await db.end();
+
+---
+
+<div class="users-module">
+    <ModuleHeader title="Users" />
+
+    <!-- Quick Add User Form -->
+    <div class="form-container">
+        <form id="add-user-form" method="POST">
+            <div class="form-section">
+                <h3>Add User</h3>
+                <div class="form-grid">
+                    <div class="input-row">
+                        <div class="input-group">
+                            <label for="name">Full Name</label>
+                            <input type="text" id="name" name="name" placeholder="John Doe" required />
+                        </div>
+                        <div class="input-group">
+                            <label for="email">Email Address</label>
+                            <input type="email" id="email" name="email" placeholder="john@example.com" required />
+                        </div>
+                    </div>
+                    <div class="input-row mt-1">
+                        <div class="input-group">
+                            <label for="password">Password</label>
+                            <div class="password-input-wrapper">
+                                <input type="password" id="password" name="password" placeholder="••••••••" required />
+                                <button type="button" class="toggle-password" tabindex="-1">
+                                    <span class="eye-open"><EyeIcon /></span>
+                                    <span class="eye-closed"><EyeOffIcon /></span>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="input-group">
+                            <label for="confirm-password">Confirm Password</label>
+                            <div class="password-input-wrapper">
+                                <input type="password" id="confirm-password" name="confirm-password" placeholder="••••••••" required />
+                                <button type="button" class="toggle-password" tabindex="-1">
+                                    <span class="eye-open"><EyeIcon /></span>
+                                    <span class="eye-closed"><EyeOffIcon /></span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <p class="password-requirements">
+                        Passwords must be <span class="req-characters">8 characters minimum</span>, <span class="req-uppercase">include an uppercase character</span>, <span class="req-number">include a number</span>, and <span class="req-special">include a special character</span>.
+                    </p>
+                    <div class="selection-box">
+                        <label>Roles</label>
+                        <div class="checkbox-list">
+                            {roles.length > 0 ? roles.map((role: RoleSummary) => (
+                                <label class="checkbox-option">
+                                    <input type="checkbox" name="roles" value={role.id} />
+                                    <span class="checkmark"></span>
+                                    <span>{role.name}</span>
+                                </label>
+                            )) : (
+                                <span class="no-result">No roles</span>
+                            )}
+                        </div>
+                    </div>
+
+                    <div class="selection-box">
+                        <label>Groups</label>
+                        <div class="checkbox-list">
+                            {groups.length > 0 ? groups.map((group: GroupSummary) => (
+                                <label class="checkbox-option">
+                                    <input type="checkbox" name="groups" value={group.id} />
+                                    <span class="checkmark"></span>
+                                    <span>{group.name}</span>
+                                </label>
+                            )) : (
+                                <span class="no-result">No groups</span>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary">Create User & Send Verification</button>
+                <button type="submit" name="skipVerification" value="true" class="btn btn-secondary">Create User Without Verification</button>
+            </div>
+            <FormFeedback id="form-feedback" />
+        </form>
+    </div>
+
+    <Datatable id="user-registry-table" searchable={true} sortable={true} perPage={10}>
+        <table id="user-registry-table">
+            <thead>
+                <tr>
+                    <th>
+                        <span class="flex items-center">Name</span>
+                    </th>
+                    <th>
+                        <span class="flex items-center">Email</span>
+                    </th>
+                    <th class="preferred desc">
+                        <span class="flex items-center">Roles</span>
+                    </th>
+                    <th>
+                        <span class="flex items-center">Groups</span>
+                    </th>
+                    <th>
+                        <span class="flex items-center">Created</span>
+                    </th>                    
+                    <th data-sortable="false">
+                        <span class="flex items-center">Actions</span>
+                    </th>                    
+                </tr>
+            </thead>
+            <tbody>
+                {users.map((user: UserRow) => {
+                    return (
+                    <tr>
+                        <td>
+                            <div class="flex items-center gap-3">
+                                <Avatar user={user!} />
+                                <a href={`/dashboard/users/user/${encodeURIComponent(user!.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''))}`}>
+                                    <strong>{user!.name}</strong>
+                                </a>
+                            </div>
+                        </td>
+                        <td>
+                            <div class="flex items-center gap-2">
+                                <span>{user.email}</span>
+                                {!user.emailVerified && (
+                                    <StatusBadge 
+                                        type="error" 
+                                        label="Unverified"
+                                    />
+                                )}
+                            </div>
+                        </td>
+                        <td>
+                            <div class="tag-cloud">
+                                {user.roles && user.roles.length > 0 ? (
+                                    user.roles.filter(r => r !== 'User' || user.roles.length === 1).map((role: string) => (
+                                        <StatusBadge type="info" label={role} />
+                                    ))
+                                ) : (
+                                    <StatusBadge type="neutral" label="No Roles" />
+                                )}
+                            </div>
+                        </td>
+                        <td>
+                            <div class="tag-cloud">
+                                {user.groups && user.groups.length > 0 ? (
+                                    user.groups.map((group: string) => <StatusBadge type="neutral" label={group} />)
+                                ) : (
+                                    <StatusBadge type="neutral" label="No Groups" />
+                                )}
+                            </div>
+                        </td>
+                        <td>{new Date(user.createdAt).toLocaleDateString()}</td>
+                        <td>
+                            <TableActions 
+                                editUrl={`/dashboard/users/user/${encodeURIComponent(user.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''))}?edit=true`}
+                                resetEmail={user.email}
+                                deleteId={user.id}
+                                deleteClass="delete-user"
+                                disabled={user.roles.includes('Superadmin') && !isSuperadmin}
+                                protectedMessage="Superadmin account is protected"
+                            />
+                        </td>
+                    </tr>
+                    );
+                })}
+            </tbody>
+        </table>
+
+    </div>
+</div>
+
+
+<script>
+    import { actions } from "astro:actions";
+    import { authClient } from "../../utils/auth-client";
+
+    const refreshUserTable = async () => {
+        try {
+            const response = await fetch(window.location.href);
+            const text = await response.text();
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(text, 'text/html');
+            const newTableContainer = doc.querySelector('div[data-datatable-id="user-registry-table"]');
+            const currentTableContainer = document.querySelector('div[data-datatable-id="user-registry-table"]');
+
+            if (newTableContainer && currentTableContainer) {
+                currentTableContainer.replaceWith(newTableContainer);
+                document.dispatchEvent(new CustomEvent('datatable:init'));
+                
+                // Re-bind event listeners for new elements
+                bindTableActions();
+            }
+        } catch (e) {
+            console.error("Failed to refresh table", e);
+        }
+    };
+
+    // If you use Astro View Transitions, also run on page-load
+    document.addEventListener('astro:page-load', () => {
+        bindTableActions();
+        initAddUserForm();
+    });
+
+    //document.addEventListener('astro:page-load', initDataTables);
+
+    // Handle Quick Add User Form
+    function initAddUserForm() {
+        // Clone and replace form to remove existing listeners if this is a re-run on the same DOM element (though unlikely with ViewTransitions)
+        // More importantly, grab fresh references
+        const addUserForm = document.getElementById('add-user-form') as HTMLFormElement;
+
+        if (!addUserForm) return;
+
+        // Remove old listeners to be safe if elements are reused
+        const newForm = addUserForm.cloneNode(true) as HTMLFormElement;
+        addUserForm.parentNode?.replaceChild(newForm, addUserForm);
+        const form = newForm;
+
+        // Re-query children from the new form
+        const newPasswordInput = form.querySelector('#password') as HTMLInputElement;
+
+        // Real-time Password Validation
+        const validatePassword = (value: string) => {
+            const reqs = {
+                characters: value.length >= 8,
+                uppercase: /[A-Z]/.test(value),
+                number: /\d/.test(value),
+                special: /[@$!%*?&#]/.test(value)
+            };
+
+            Object.entries(reqs).forEach(([key, valid]) => {
+                const el = document.querySelector(`.req-${key}`);
+                if (el) {
+                    el.classList.toggle('active', valid);
+                }
+            });
+        };
+
+        if (newPasswordInput) {
+            newPasswordInput.addEventListener('input', (e) => {
+                validatePassword((e.target as HTMLInputElement).value);
+            });
+        }
+
+        // Password Toggles - need inside init too
+        document.querySelectorAll('.toggle-password').forEach(btn => {
+           // Replace to clear old listeners
+           const newBtn = btn.cloneNode(true) as HTMLElement;
+           btn.parentNode?.replaceChild(newBtn, btn);
+           
+           newBtn.addEventListener('click', () => {
+                const wrapper = newBtn.closest('.password-input-wrapper');
+                const input = wrapper?.querySelector('input');
+                if (input) {
+                    const isPassword = input.type === 'password';
+                    input.type = isPassword ? 'text' : 'password';
+                    wrapper?.classList.toggle('show-password', isPassword);
+                }
+            });
+        });
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const feedback = document.getElementById('form-feedback'); // Logic uses this global ID
+            if (!feedback) return;
+
+            const formData = new FormData(form);
+            const password = formData.get("password") as string;
+            const confirmPassword = formData.get("confirm-password") as string;
+
+            // Validation
+            if (password !== confirmPassword) {
+                feedback.className = 'form-feedback feedback error';
+                feedback.textContent = 'Passwords do not match.';
+                feedback.style.display = 'block';
+                return;
+            }
+
+            const passwordRegex = /^(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&#])[A-Za-z\d@$!%*?&#]{8,}$/;
+            if (!passwordRegex.test(password)) {
+                feedback.className = 'form-feedback feedback error';
+                feedback.textContent = 'Password does not meet requirements.';
+                feedback.style.display = 'block';
+                return;
+            }
+
+            feedback.className = 'form-feedback feedback loading';
+            feedback.textContent = 'Creating user...';
+            feedback.style.display = 'block';
+
+            // Detect which button was clicked
+            const submitter = (e as SubmitEvent).submitter as HTMLButtonElement;
+            if (submitter && submitter.name === 'skipVerification') {
+                formData.append('skipVerification', 'true');
+            }
+
+            const { data: result, error } = await actions.users.create(formData);
+
+            if (error) {
+                feedback.className = 'form-feedback feedback error';
+                let message = error.message;
+
+                // Clean up Zod validation errors
+                if (message.startsWith("Failed to validate: ")) {
+                    try {
+                        const jsonPart = message.replace("Failed to validate: ", "");
+                        const errors = JSON.parse(jsonPart);
+                        if (Array.isArray(errors) && errors.length > 0 && errors[0].message) {
+                            message = errors[0].message;
+                        }
+                    } catch (e) {
+                         message = message.replace("Failed to validate: ", "");
+                    }
+                }
+                
+                feedback.textContent = message;
+            } else if (result?.success) {
+                feedback.className = 'form-feedback feedback success';
+                if (result.isVerified) {
+                    feedback.textContent = 'User created successfully! Account is immediately verified.';
+                } else {
+                    feedback.textContent = 'User created successfully! A verification email has been sent.';
+                }
+                
+                form.reset();
+                
+                // Refresh table
+                await refreshUserTable();
+                
+                // Reset requirements
+                document.querySelectorAll('.req-characters, .req-uppercase, .req-number, .req-special').forEach(el => el.classList.remove('active'));
+            } else {
+                feedback.className = 'form-feedback feedback error';
+                feedback.textContent = result?.error || 'An unknown error occurred.';
+            }
+        });
+    }
+
+    // Handle Reset Password click
+    function bindTableActions() {
+        // Handle Reset Password click
+        document.querySelectorAll('.reset-pw').forEach(btn => {
+            // Remove old listener to avoid duplicates if re-binding on existing elements (though we replace HTML so safe)
+            btn.replaceWith(btn.cloneNode(true));
+        });
+
+        // Re-select fresh elements
+        document.querySelectorAll('.reset-pw').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                const btnEl = e.currentTarget as HTMLElement;
+                const email = btnEl.dataset.email;
+                const icon = btnEl.querySelector('svg')?.outerHTML;
+                if (email) {
+                    (window as any).stimsToast.confirm(`Send password reset link to ${email}?`, async () => {
+                        // @ts-ignore
+                        const { error } = await authClient.requestPasswordReset({
+                            email: email,
+                            redirectTo: "/password-reset"
+                        });
+                        
+                        if (error) {
+                            (window as any).stimsToast.show(`Error: ${error.message}`, 'error');
+                        } else {
+                            (window as any).stimsToast.show('Password reset link sent!');
+                        }
+                    }, null, 'success', icon);
+                }
+            });
+        });
+
+        // Handle Delete User
+        document.querySelectorAll('.delete-user').forEach(btn => {
+            btn.replaceWith(btn.cloneNode(true));
+        });
+        
+        document.querySelectorAll('.delete-user').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                const btnEl = e.currentTarget as HTMLElement;
+                const id = btnEl.dataset.id;
+                
+                const icon = btnEl.querySelector('svg')?.outerHTML;
+                (window as any).stimsToast.confirm('Are you sure you want to delete this user? This action cannot be undone.', async () => {
+                    const { error } = await actions.users.deleteUser({ id: id! });
+                    if (error) {
+                        (window as any).stimsToast.show(`Error deleting user: ${error.message}`, 'error');
+                    } else {
+                        (window as any).stimsToast.show('User deleted successfully!');
+                        // Refresh instead of reload
+                        await refreshUserTable();
+                    }
+                }, null, 'warning', icon);
+            });
+        });
+    }
+</script>

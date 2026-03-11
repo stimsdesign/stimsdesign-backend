@@ -1,0 +1,17 @@
+{
+  "name": "@stimsdesign/backend",
+  "type": "module",
+  "version": "1.0.0",
+  "exports": {
+    "./*": "./src/*"
+  },
+  "dependencies": {
+    "@stimsdesign/core": "*",
+    "better-auth": "^1.4.18",
+    "ejs": "^4.0.1",
+    "@types/ejs": "^3.1.5",
+    "nodemailer": "^7.0.13",
+    "@types/nodemailer": "^7.0.9",
+    "simple-datatables": "^10.2.0"
+  }
+}

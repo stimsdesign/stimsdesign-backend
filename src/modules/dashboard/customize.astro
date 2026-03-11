@@ -1,0 +1,20 @@
+---
+export const prerender = false;
+/**
+ * Dashboard Module
+ * Placeholder for dashboard page
+ *
+ * Related files:
+ *   - src/pages/dashboard/[module]/[...path].astro (Dispatcher)
+ *   - src/layouts/DashboardLayout.astro
+ */
+export const sortOrder = 1;
+const user = Astro.locals.user;
+const displayName = user?.name || "Guest";
+const role = (user as any)?.role || "Unassigned";
+---
+
+<div class="home-module module-splash">
+    <h2>Customize</h2>
+    <p class="info">Hello, {displayName}. You are a {role}.</p>
+</div>

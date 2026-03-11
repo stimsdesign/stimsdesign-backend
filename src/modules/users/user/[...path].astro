@@ -1,0 +1,625 @@
+---
+/**
+ * Users Module - User Details
+ * Displays comprehensive profile data, roles, and memberships for a specific user.
+ * 
+ * Path: /dashboard/users/user/[username-slug]
+ */
+
+ export const prerender = false;
+
+// Module Menu Configuration
+export const menuSkip = true;
+
+import { db, getCachedQuery, CACHE_TTL } from "@stimsdesign/core/db.ts";
+import Avatar from "../../../components/elements/Avatar.astro";
+import ModuleHeader from "../../../components/layout/ModuleHeader.astro";
+import StatusBadge from "../../../components/elements/StatusBadge.astro";
+import FormFeedback from "../../../components/forms/FormFeedback.astro";
+import { Auth } from "../../../utils/auth.ts";
+import { logger } from "@stimsdesign/core/logger";
+
+// Extract username slug from the path
+// The path comes as "username-slug" or empty if root. 
+// But wait, the dispatcher passes "user/username-slug" if we access /dashboard/users/user/username-slug.
+// Wait, in `[...path].astro`, `module`='users', `subPath`='user'.
+// `segments` were ['users', 'user', 'slug'].
+// The `[...path].astro` inside `modules/users/user/` will receive what as params?
+// In regular Astro, nested dynamic routes consume the remaining path.
+// If the dispatcher renders it, it passes the params it has? No, components don't automatically get params unless checking Astro.params.
+// `Astro.params.path` in the DISPATCHER (src/pages/dashboard/[...path].astro) contains the FULL path "users/user/slug".
+// The nested component `src/modules/users/user/[...path].astro` will access the SAME `Astro.params.path` because it is rendered in the context of the page request.
+
+const { path } = Astro.params;
+// path is likely "users/user/username-slug" if accessed via dispatcher
+const segments = path ? path.split('/').filter(Boolean) : [];
+// We need to robustly extract the last segment.
+logger.log(`[UsersModule] path: ${path}, segments: ${JSON.stringify(segments)}`);
+const usernameSlug = segments.length > 0 ? segments[segments.length - 1] : null;
+logger.log(`[UsersModule] usernameSlug: ${usernameSlug}`);
+
+// Convert slug back to name helpers or better lookup
+// We are looking up by: LOWER(REPLACE(name, ' ', '-')) = slug
+// This assumes the name in DB has single spaces.
+
+const isEditMode = Astro.url.searchParams.get("edit") === "true";
+
+interface UserDetail {
+    id: string;
+    name: string;
+    email: string;
+    emailVerified: boolean;
+    createdAt: Date;
+    image: string | null;
+    custom_image: string | null;
+    avatar_bg: string | null;
+    avatar_fg: string | null;
+}
+
+interface RoleSummary {
+    id: string;
+    name: string;
+    roleId?: string; // For joining
+}
+
+interface GroupSummary {
+    id: string;
+    name: string;
+    groupId?: string; // For joining
+}
+
+let user: UserDetail | undefined;
+let userError: string | null = null;
+
+if (usernameSlug) {
+    // Lookup user by slug
+    // We use a more robust regex replacement for space comparison if needed, but for now simple replace is standard.
+    // Note: Postgres `REPLACE` is case sensitive, but we lower both sides.
+    
+    const { rows } = await db.query<UserDetail>(`
+        SELECT id, name, email, "emailVerified", "createdAt", image, custom_image, avatar_bg, avatar_fg
+        FROM "user"
+        WHERE TRIM(BOTH '-' FROM REGEXP_REPLACE(LOWER(name), '[^a-z0-9]+', '-', 'g')) = $1
+    `, [usernameSlug.toLowerCase()]);
+    user = rows[0];
+    
+    if (!user) {
+        userError = `User not found for slug: ${usernameSlug}`; // Debugging hint
+    }
+} else {
+    userError = "No username provided.";
+}
+
+let isCurrentUserSuperadmin = false;
+let isTargetSuperadmin = false;
+let roles: RoleSummary[] = [];
+let groups: GroupSummary[] = [];
+let allRoles: RoleSummary[] = [];
+let allGroups: GroupSummary[] = [];
+
+if (user) {
+    // Check permissions
+    const session = await Auth.api.getSession({ headers: Astro.request.headers });
+    isCurrentUserSuperadmin = (session?.user as any)?.role?.toLowerCase() === 'superadmin';
+
+    roles = await getCachedQuery(`users:roles:user:${user.id}`, CACHE_TTL, async () => {
+        const { rows } = await db.query<RoleSummary>(`
+            SELECT r.id, r.name 
+            FROM "roles" r
+            JOIN "user_roles" ur ON r.id = ur."roleId"
+            WHERE ur."userId" = $1
+        `, [user!.id]);
+        return rows;
+    });
+
+    groups = await getCachedQuery(`users:groups:user:${user.id}`, CACHE_TTL, async () => {
+        const { rows } = await db.query<GroupSummary>(`
+            SELECT g.id, g.name 
+            FROM "groups" g
+            JOIN "user_groups" ug ON g.id = ug."groupId"
+            WHERE ug."userId" = $1
+        `, [user!.id]);
+        return rows;
+    });
+    
+    isTargetSuperadmin = roles.some(r => r.name === 'Superadmin');
+
+    // Protect Superadmin: Redirect unauthorized edits
+    if (isEditMode && isTargetSuperadmin && !isCurrentUserSuperadmin) {
+        return Astro.redirect(Astro.url.pathname);
+    }
+
+    // If in edit mode, we need ALL roles and groups to populate the form options
+    if (isEditMode) {
+        const allRolesData = await getCachedQuery('users:roles:edit', CACHE_TTL, async () => {
+             const { rows } = await db.query("SELECT id, name FROM \"roles\" WHERE name NOT IN ('Superadmin', 'User') ORDER BY weight ASC");
+             return rows;
+        });
+        
+        allRoles = [...allRolesData];
+
+        if (isCurrentUserSuperadmin) {
+            const { rows: saRole } = await db.query("SELECT id, name FROM \"roles\" WHERE name = 'Superadmin'");
+            if (saRole.length > 0) {
+                allRoles = [saRole[0], ...allRoles];
+            }
+        }
+
+        allGroups = await getCachedQuery('users:groups:list', CACHE_TTL, async () => {
+             const { rows } = await db.query('SELECT id, name FROM "groups" ORDER BY name ASC');
+             return rows;
+        });
+    }
+}
+
+// Resolve DB var() fallback defaults to strict hex strings for the HTML <input type="color"> element
+const defaultBgHex = "#040623";
+const defaultFgHex = "#dbd3d3";
+const pickerBg = (!user?.avatar_bg || user.avatar_bg.startsWith('var(')) ? defaultBgHex : user.avatar_bg;
+const pickerFg = (!user?.avatar_fg || user.avatar_fg.startsWith('var(')) ? defaultFgHex : user.avatar_fg;
+
+// Logic to handle error display in the template
+
+// Logic to handle error display in the template
+---
+
+{userError ? (
+    <div class="user-detail-module">
+        <ModuleHeader title="User Not Found" backUrl="/dashboard/users" backLabel="Return to User List" />
+    </div>
+) : (
+    <div class="user-detail-module">
+        <ModuleHeader 
+            title={user!.name}
+            backUrl={isEditMode ? Astro.url.pathname : "/dashboard/users"}
+            backLabel={isEditMode ? "Return to User" : "Back to All Users"}
+        >
+            <div slot="prefix">
+                {isEditMode ? (
+                    <div class="avatar-preview-container">
+                        <Avatar user={user!} size="80px" previewIdPrefix="avatar-preview" />
+                    </div>
+                ) : (
+                    <Avatar user={user!} size="80px" />
+                )}
+            </div>
+
+            {isEditMode && (
+                <svg slot="title-icon" class="w-10 h-10 text-white/50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path>
+                </svg>
+            )}
+        </ModuleHeader>
+
+        {isEditMode ? (
+
+            <form id="edit-user-form" method="POST" enctype="multipart/form-data" class="form-container">
+                <input type="hidden" name="id" value={user!.id} />
+                
+                <div class="form-grid">
+
+                    <div class="avatar-controls" style="flex-grow: 1; min-width: 250px;">
+                        <div class="input-group mb-4">
+                            <label for="avatarFile">Upload New Avatar</label>
+                            <input type="file" id="avatarFile" name="avatarFile" accept="image/png, image/jpeg, image/jpg" class="input" />
+                            <small>Maximum file size: 5MB</small>
+                        </div>
+                        <div class="checkbox-list mb-4">
+                            <label class="checkbox-option">
+                                <input type="checkbox" id="removeAvatar" name="removeAvatar" value="true" />
+                                <span class="checkmark"></span>
+                                <span>Remove Current Avatar</span>
+                            </label>
+                        </div>
+                        
+                        <div class="form-grid" id="avatar-colors-container">
+                            <div class="input-group">
+                                <label for="avatar_bg">Background Color</label>
+                                <input type="color" id="avatar_bg" name="avatar_bg" value={pickerBg} style="height: 50px; width: 50px; cursor: pointer; outline:none;" />
+                            </div>
+                            <div class="input-group">
+                                <label for="avatar_fg">Foreground Color</label>
+                                <input type="color" id="avatar_fg" name="avatar_fg" value={pickerFg} style="height: 50px; width: 50px; cursor: pointer; outline:none;" />
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-grid">
+                    <div class="input-group">
+                        <label for="name">Full Name</label>
+                        <input type="text" id="name" name="name" value={user!.name} required />
+                    </div>
+                    <div class="input-group">
+                        <label for="email" class="flex items-center gap-2">
+                            Email Address 
+                            {!user!.emailVerified && <StatusBadge type="error" label="Unverified" />}
+                        </label>
+                        <input type="email" id="email" name="email" value={user!.email} required />
+                    </div>
+                </div>
+
+                <div class="selection-box">
+                    <span>Roles</span>
+                    <div class="checkbox-list">
+                        {allRoles.map((role: RoleSummary) => {
+                             const isChecked = roles.some(r => r.id === role.id);
+                             const isSuperadminRole = role.name === 'Superadmin';
+                             const isDisabled = isSuperadminRole && isChecked && !isCurrentUserSuperadmin;
+
+                             return (
+                                <label class="checkbox-option" title={isDisabled ? "Only Superadmins can modify the Superadmin role" : ""}>
+                                    <input 
+                                        type="checkbox" 
+                                        name="roles" 
+                                        value={role.id} 
+                                        checked={isChecked}
+                                        disabled={isDisabled}
+                                        style={isDisabled ? "opacity: 0.5; cursor: not-allowed;" : ""}
+                                    />
+                                    {isDisabled && <input type="hidden" name="roles" value={role.id} />}
+                                    <span class="checkmark"></span>
+                                    <span>{role.name}</span>
+                                </label>
+                            );
+                        })}
+                    </div>
+
+                    <span>Groups</span>
+                    <div class="checkbox-list">
+                        {allGroups.map((group: GroupSummary) => (
+                            <label class="checkbox-option">
+                                <input 
+                                    type="checkbox" 
+                                    name="groups" 
+                                    value={group.id} 
+                                    checked={groups.some(g => g.id === group.id)}
+                                />
+                                <span class="checkmark"></span>
+                                <span>{group.name}</span>
+                            </label>
+                        ))}
+                    </div>
+                </div>
+
+                <div class="form-actions">
+                    <button type="submit" class="btn btn-primary">Save Changes</button>
+                    {!user!.emailVerified && (
+                        <button type="button" class="btn btn-secondary manually-verify-btn" data-id={user!.id}>Manually Verify</button>
+                    )}
+                    <button type="button" class="btn btn-delete delete-user-page" data-id={user!.id}>Delete User</button>
+                </div>
+                <FormFeedback id="edit-feedback" />
+            </form>
+            <script>
+                import { actions } from "astro:actions";
+                import { navigate } from "astro:transitions/client";
+                
+                document.addEventListener('astro:page-load', () => {
+                    const editForm = document.getElementById('edit-user-form') as HTMLFormElement;
+                    const feedback = document.getElementById('edit-feedback');
+
+                    if (editForm && feedback) {
+                        editForm.addEventListener('submit', async (e) => {
+                            e.preventDefault();
+                            
+                            const formData = new FormData(editForm);
+                            // Zod requires removeAvatar to be not just present but a string like 'true' if checked
+                            const removeAvatarInput = editForm.querySelector('input[name="removeAvatar"]') as HTMLInputElement;
+                            if (removeAvatarInput && !removeAvatarInput.checked) {
+                                formData.delete('removeAvatar');
+                            }
+                            
+                            feedback.style.display = 'block';
+                            feedback.className = 'form-feedback feedback loading';
+                            feedback.textContent = 'Saving changes...';
+                            feedback.style.display = 'block';
+
+                            const { data: result, error } = await actions.users.updateUser(formData);
+
+                             if (error) {
+                                feedback.className = 'form-feedback feedback error';
+                                feedback.textContent = `Error: ${error.message}`;
+                                feedback.style.display = 'block';
+                            } else if (result?.success) {
+                                feedback.className = 'form-feedback feedback success';
+                                feedback.textContent = 'Changes saved successfully!';
+                                // Redirect to view mode (remove ?edit=true)
+                                const currentPath = window.location.pathname;
+                                const newName = result.name || '';
+                                const newSlug = newName.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+                                
+                                // If name changed, we need to correct the path slug
+                                const pathParts = currentPath.split('/');
+                                if (pathParts[pathParts.length - 1] !== newSlug) {
+                                    pathParts[pathParts.length - 1] = encodeURIComponent(newSlug);
+                                    navigate(pathParts.join('/')); 
+                                } else {
+                                    // Just navigate to the current path to clear query params
+                                    navigate(currentPath);
+                                }
+                            }
+                        });
+                    }
+
+                    const deleteBtn = document.querySelector('.delete-user-page');
+                    if (deleteBtn) {
+                        deleteBtn.addEventListener('click', async (e) => {
+                            const btn = e.currentTarget as HTMLElement;
+                            const id = btn.dataset.id;
+                            
+                            const icon = btn.querySelector('svg')?.outerHTML;
+                            (window as any).stimsToast.confirm('Are you sure you want to delete this user? This action cannot be undone.', async () => {
+                                const { error } = await actions.users.deleteUser({ id: id! });
+                                if (error) {
+                                    (window as any).stimsToast.show(`Error deleting user: ${error.message}`, 'error');
+                                } else {
+                                    (window as any).stimsToast.show('User deleted successfully!');
+                                    navigate('/dashboard/users');
+                                }
+                            }, null, 'warning', icon);
+                        });
+                    }
+
+                    const verifyBtn = document.querySelector('.manually-verify-btn');
+                    if (verifyBtn) {
+                        verifyBtn.addEventListener('click', async (e) => {
+                            const btn = e.currentTarget as HTMLElement;
+                            const id = btn.dataset.id;
+                            
+                            if (id) {
+                                const icon = btn.querySelector('svg')?.outerHTML;
+                                (window as any).stimsToast.confirm('Manually verify this user\'s email address?', async () => {
+                                    const { data: result, error } = await actions.users.manuallyVerifyUser({ id: id });
+                                    if (error) {
+                                        (window as any).stimsToast.show(`Error verifying user: ${error.message}`, 'error');
+                                    } else if (result?.success) {
+                                        (window as any).stimsToast.show('User manually verified!');
+                                        navigate(window.location.pathname, { history: 'replace' });
+                                    }
+                                }, null, 'success', icon);
+                            }
+                        });
+                    }
+
+                    // Avatar Preview Logic
+                    const avatarFileInput = document.getElementById('avatarFile') as HTMLInputElement;
+                    const removeAvatarCheck = document.getElementById('removeAvatar') as HTMLInputElement;
+                    const previewWrapper = document.querySelector('.avatar-preview-container .avatar-wrapper') as HTMLDivElement;
+                    let avatarPreviewImg = document.getElementById('avatar-preview-img') as HTMLImageElement;
+                    let avatarPreviewInitials = document.getElementById('avatar-preview-initials') as HTMLSpanElement;
+                    const colorContainer = document.getElementById('avatar-colors-container') as HTMLDivElement;
+                    const bgColorInput = document.getElementById('avatar_bg') as HTMLInputElement;
+                    const fgColorInput = document.getElementById('avatar_fg') as HTMLInputElement;
+
+                    // Initialize states based on existing image
+                    let originalImageSrc = avatarPreviewImg?.src || '';
+                    let hasOriginalImage = originalImageSrc && originalImageSrc !== window.location.href;
+
+                    function updatePreview() {
+                        if (!avatarFileInput || !colorContainer) return;
+                        
+                        // We must fetch these dynamically because they might be created/destroyed by this function.
+                        avatarPreviewImg = document.getElementById('avatar-preview-img') as HTMLImageElement;
+                        avatarPreviewInitials = document.getElementById('avatar-preview-initials') as HTMLSpanElement;
+                        
+                        const file = avatarFileInput.files?.[0];
+                        const willRemove = removeAvatarCheck?.checked;
+
+                        if (file && !willRemove) {
+                            // Render new file
+                            const reader = new FileReader();
+                            reader.onload = (e) => {
+                                // If the img tag originally didn't exist (because user only had initials), create it now.
+                                if (!avatarPreviewImg && previewWrapper) {
+                                    avatarPreviewImg = document.createElement('img');
+                                    avatarPreviewImg.id = 'avatar-preview-img';
+                                    avatarPreviewImg.className = 'avatar-img';
+                                    avatarPreviewImg.style.display = 'block';
+                                    avatarPreviewImg.style.border = `2px solid ${fgColorInput?.value || 'var(--color-foreground)'}`;
+                                    avatarPreviewImg.style.backgroundColor = bgColorInput?.value || 'var(--color-background)';
+                                    previewWrapper.appendChild(avatarPreviewImg);
+                                }
+
+                                if (avatarPreviewImg) {
+                                    avatarPreviewImg.src = e.target?.result as string;
+                                    avatarPreviewImg.style.display = 'block';
+                                }
+                                if (avatarPreviewInitials) avatarPreviewInitials.style.display = 'none';
+                            };
+                            reader.readAsDataURL(file);
+                        } else if (willRemove || !hasOriginalImage) {
+                            // Show initials
+                            if (avatarPreviewImg) avatarPreviewImg.style.display = 'none';
+                            
+                            // If initials didn't exist before, create them
+                            if (!avatarPreviewInitials && previewWrapper) {
+                                avatarPreviewInitials = document.createElement('span');
+                                avatarPreviewInitials.id = 'avatar-preview-initials';
+                                avatarPreviewInitials.className = 'initials-avatar';
+                                avatarPreviewInitials.style.display = 'flex';
+                                
+                                const headerEl = document.querySelector('.module-header h2');
+                                const headerText = headerEl ? headerEl.textContent : null;
+                                let userInitials = 'U';
+                                if (headerText && headerText.trim().length > 0) {
+                                    const parts = headerText.trim().split(/\s+/);
+                                    if (parts.length >= 2) {
+                                        userInitials = parts[0].charAt(0).toUpperCase() + parts[1].charAt(0).toUpperCase();
+                                    } else {
+                                        userInitials = parts[0].charAt(0).toUpperCase();
+                                    }
+                                }
+                                avatarPreviewInitials.textContent = userInitials;
+                                
+                                // Apply the explicit color picker values if creating from scratch
+                                avatarPreviewInitials.style.backgroundColor = bgColorInput?.value || 'var(--color-background)';
+                                avatarPreviewInitials.style.color = fgColorInput?.value || 'var(--color-foreground)';
+                                avatarPreviewInitials.style.border = `2px solid ${fgColorInput?.value || 'var(--color-foreground)'}`;
+                                previewWrapper.appendChild(avatarPreviewInitials);
+                            }
+
+                            if (avatarPreviewInitials) {
+                                avatarPreviewInitials.style.display = 'flex';
+                            }
+                        } else {
+                            // Show original image
+                            if (avatarPreviewImg) {
+                                avatarPreviewImg.src = originalImageSrc;
+                                avatarPreviewImg.style.display = 'block';
+                            }
+                            if (avatarPreviewInitials) avatarPreviewInitials.style.display = 'none';
+                        }
+                    }
+
+                    if (avatarFileInput) {
+                         avatarFileInput.addEventListener('change', () => {
+                             const file = avatarFileInput.files?.[0];
+                             
+                             if (file) {
+                                 const validTypes = ['image/jpeg', 'image/jpg', 'image/png'];
+                                 let errorMessage = '';
+                                 
+                                 if (!validTypes.includes(file.type)) {
+                                     errorMessage = 'Invalid file format. Please upload a JPG, JPEG, or PNG image.';
+                                 } else if (file.size > 5 * 1024 * 1024) {
+                                     errorMessage = 'Avatar image must be smaller than 5MB.';
+                                 }
+                                 
+                                 if (errorMessage) {
+                                     const feedback = document.getElementById('edit-feedback');
+                                     if (feedback) {
+                                         feedback.className = 'form-feedback feedback error';
+                                         feedback.textContent = errorMessage;
+                                         feedback.style.display = 'block';
+                                     }
+                                     avatarFileInput.value = ''; // clear input
+                                     return;
+                                 }
+                                 
+                                 // Clear feedback if everything is okay
+                                 const feedback = document.getElementById('edit-feedback');
+                                 if (feedback && feedback.style.display !== 'none') {
+                                     feedback.style.display = 'none';
+                                 }
+                             }
+                             
+                             if (removeAvatarCheck && avatarFileInput.files && avatarFileInput.files.length > 0) {
+                                 removeAvatarCheck.checked = false; // Uncheck remove if uploading new
+                             }
+                             updatePreview();
+                         });
+                    }
+
+                    if (removeAvatarCheck) {
+                        removeAvatarCheck.addEventListener('change', () => {
+                            if (removeAvatarCheck.checked && avatarFileInput) {
+                                avatarFileInput.value = ''; // Clear file input if asking to remove
+                            }
+                            updatePreview();
+                        });
+                    }
+                    
+                    if (bgColorInput) {
+                        bgColorInput.addEventListener('input', (e) => {
+                            const currentInitials = document.getElementById('avatar-preview-initials');
+                            const currentImg = document.getElementById('avatar-preview-img');
+                            const val = (e.target as HTMLInputElement).value;
+                            
+                            if (currentInitials) currentInitials.style.backgroundColor = val;
+                            if (currentImg) currentImg.style.backgroundColor = val;
+                        });
+                    }
+                    
+                    if (fgColorInput) {
+                        fgColorInput.addEventListener('input', (e) => {
+                            const currentInitials = document.getElementById('avatar-preview-initials');
+                            const currentImg = document.getElementById('avatar-preview-img');
+                            const val = (e.target as HTMLInputElement).value;
+                            
+                            if (currentInitials) {
+                                currentInitials.style.color = val;
+                                currentInitials.style.border = `2px solid ${val}`;
+                            }
+                            if (currentImg) {
+                                currentImg.style.border = `2px solid ${val}`;
+                            }
+                        });
+                    }
+                });
+            </script>
+        ) : (
+            
+            <div class="module-card">
+                <h5>Profile</h5>
+                <ul class="properties-list">
+                    <li class="flex items-center gap-2">
+                        <strong>User Email:</strong> {user!.email}
+                        {!user!.emailVerified && <StatusBadge type="error" label="Unverified" />}
+                    </li>
+                    <li><strong>Created:</strong>&nbsp;{new Date(user!.createdAt).toLocaleString()}</li>
+                </ul>
+            </div>
+            <div class="module-card">
+                <h5>Roles</h5>
+                <div class="flex flex-wrap gap-2">
+                    {roles.map((r: RoleSummary) => <StatusBadge type="info" label={r.name} />)}
+                    {roles.length === 0 && <p class="empty">No roles assigned</p>}
+                </div>
+            </div>
+            <div class="module-card">
+                <h5>Groups</h5>
+                <div class="flex flex-wrap gap-2">
+                    {groups.map((g: GroupSummary) => <StatusBadge type="neutral" label={g.name} />)}
+                    {groups.length === 0 && <p class="empty">No groups assigned</p>}
+                </div>
+            </div>
+            <div class="flex gap-2 mt-4">
+                {(isCurrentUserSuperadmin || !isTargetSuperadmin) ? (
+                    <>
+                        <a href={`?edit=true`} class="btn btn-primary btn-sm">Edit Profile</a>
+                        <button class="btn btn-secondary btn-sm reset-pw" data-email={user!.email}>Reset Password</button>
+                    </>
+                ) : (
+                    <p class="small italic text-muted">Superadmin profile is protected and cannot be edited by your current role.</p>
+                )}
+            </div>
+        )}
+    </div>
+)}
+
+<script>
+    import { authClient } from "../../../utils/auth-client";
+
+    const initResetPassword = () => {
+        const btn = document.querySelector('.reset-pw');
+        // Use a flag to prevent double binding if init called twice on same element
+        if (btn && !btn.hasAttribute('data-bound')) {
+            btn.setAttribute('data-bound', 'true');
+            btn.addEventListener('click', async (e) => {
+                const target = e.currentTarget as HTMLElement;
+                const email = target.dataset.email;
+                const icon = target.querySelector('svg')?.outerHTML;
+                if (email) {
+                    (window as any).stimsToast.confirm(`Send password reset link to ${email}?`, async () => {
+                        // @ts-ignore
+                        const { error } = await authClient.requestPasswordReset({
+                            email: email,
+                            redirectTo: "/password-reset"
+                        });
+                        
+                        if (error) {
+                            (window as any).stimsToast.show(`Error: ${error.message}`, 'error');
+                        } else {
+                            (window as any).stimsToast.show('Password reset link sent!');
+                        }
+                    }, null, 'success', icon);
+                }
+            });
+        }
+    };
+
+    // Run on initial load and view transitions
+    initResetPassword();
+    document.addEventListener('astro:page-load', initResetPassword);
+</script>

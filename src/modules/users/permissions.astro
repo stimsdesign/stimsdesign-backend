@@ -1,0 +1,227 @@
+---
+/**
+ * Users Module - Permissions Registry
+ * Manage granular permissions for the system.
+ * (Cache cleared)
+ */
+
+export const prerender = false;
+
+// Module Menu Configuration
+export const sortOrder = 3;
+export const activeMatch = "/dashboard/users/permissions/";
+export const menuLabel = "Permissions";
+
+import { db, getCachedQuery, CACHE_TTL } from "@stimsdesign/core/db.ts";
+import ModuleHeader from "../../components/layout/ModuleHeader.astro";
+import Datatable from "../../components/interface/Datatable.astro";
+import Tabs from "../../components/interface/Tabs.astro";
+import TableActions from "../../components/interface/TableActions.astro";
+import FormFeedback from "../../components/forms/FormFeedback.astro";
+
+// 1. Fetch all permissions
+const permissions = await getCachedQuery('users:permissions:list', CACHE_TTL, async () => {
+    const { rows } = await db.query('SELECT * FROM "permissions" ORDER BY resource ASC, action ASC');
+    return rows;
+});
+
+// 2. Extract distinct resources for the dropdown
+const rawModules = import.meta.glob('/src/modules/**/*.astro');
+const dynamicResources = new Set<string>();
+
+for (const path of Object.keys(rawModules)) {
+    if (path.includes('[')) continue;
+    
+    const parts = path.split('/src/modules/')[1].split('/');
+    if (parts.length === 2) {
+        const moduleName = parts[0].toUpperCase();
+        const fileName = parts[1].replace('.astro', '').toUpperCase();
+        
+        if (fileName === 'INDEX') {
+            dynamicResources.add(moduleName);
+        } else {
+            dynamicResources.add(`${moduleName} » ${fileName}`);
+        }
+    }
+}
+
+const distinctResources = [...new Set([...dynamicResources, ...permissions.map((p: any) => p.resource)])].sort();
+
+---
+
+<div class="permissions-module">
+    <Tabs tabs={[
+        { id: 'apps-content', label: 'Apps', active: true },
+        { id: 'registry-content', label: 'Registry' },
+    ]}>
+        <div data-tab-content="apps-content" class="p-4 rounded-lg">
+            <ModuleHeader title="Apps" />
+            
+            <!-- select box for apps -->
+
+            <!-- dynamic table for selected app that lists contains a primary row for each app page (i.e. groups, roles, permissions for Users app) and a secondary group of rows each role in the app with a pill switch style checkbox to enable or disable for each permission -->
+            
+        </div>
+
+        <div data-tab-content="registry-content" class="hidden p-4 rounded-lg">
+            <ModuleHeader title="Registry" />
+
+            <!-- Create Custom Permission Form -->
+            <div class="form-container">
+                <form id="create-permission-form">
+                    <div class="form-section">
+                        <h3>Create Custom Permission</h3>
+                        <div class="form-grid">
+                            <div class="input-row">
+                                <div class="input-group">
+                                    <label for="permResource">Module (Resource)</label>
+                                    <select id="permResource" name="resource" required>
+                                        <option value="" disabled selected>Select a module...</option>
+                                        {distinctResources.map(r => (
+                                            <option value={r}>{r.toUpperCase()}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div class="input-group">
+                                    <label for="permAction">Permission (Action)</label>
+                                    <input type="text" id="permAction" name="action" placeholder="e.g. archive, export, approve" pattern="[a-zA-Z0-9_\-]+" title="Single word, hyphens or underscores allowed." required />
+                                </div>
+                            </div>
+                            <div class="input-row">
+                                <div class="input-group">
+                                    <label for="permDesc">Description</label>
+                                    <input type="text" id="permDesc" name="description" placeholder="Brief description..." />
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">Create Permission</button>
+                    </div>
+                    <FormFeedback id="form-feedback" />
+                </form>
+            </div>
+
+            <Datatable id="permissions-registry-table" searchable={true} sortable={true} perPage={10} showSystemDefaultsFilter={true}>
+                <table id="permissions-registry-table">
+                    <thead>
+                        <tr>
+                            <th class="preferred desc"><span class="flex items-center">Module</span></th>
+                            <th><span class="flex items-center">Permission</span></th>
+                            <th><span class="flex items-center">Description</span></th>
+                            <th data-sortable="false"><span class="flex items-center">Actions</span></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {permissions.map((p: any) => (
+                            <tr>
+                                <td><span class="uppercase">{p.resource}</span></td>
+                                <td><a href={`/dashboard/users/permissions/${encodeURIComponent(p.id)}`} title="View Permission"><strong>{p.action}</strong></a></td>
+                                <td>{p.description || "-"}</td>
+                                <td>
+                                    <TableActions 
+                                        editUrl={`/dashboard/users/permissions/${encodeURIComponent(p.id)}?edit=true`}
+                                        deleteId={p.id}
+                                        deleteClass="delete-perm"
+                                        disabled={['read', 'write', 'delete'].includes(p.action)}
+                                        protectedMessage="Default permissions cannot be deleted"
+                                    />
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+                <FormFeedback id="table-feedback" />
+            </Datatable>
+        </div>
+    </Tabs>
+</div>
+
+<script>
+    import { actions } from "astro:actions";
+
+    const setupTableListeners = () => {
+        const tableContainer = document.querySelector('div[data-datatable-id="permissions-registry-table"]');
+        if (tableContainer && !(tableContainer as any)._deleteListenerAttached) {
+            tableContainer.addEventListener('click', async (e) => {
+                const target = e.target as HTMLElement;
+                const btn = target.closest('.delete-perm');
+                if (!btn) return;
+
+                const id = (btn as HTMLElement).dataset.id;
+                if (!id) return;
+
+                const icon = btn.querySelector('svg')?.outerHTML;
+                (window as any).stimsToast.confirm('Are you sure you want to delete this permission?', async () => {
+                    const { error } = await actions.users.deletePermission({ id });
+                    if (error) {
+                        (window as any).stimsToast.show(error.message, 'error');
+                    } else {
+                        (window as any).stimsToast.show('Permission deleted successfully!');
+                        await refreshTable();
+                    }
+                }, null, 'warning', icon);
+            });
+            (tableContainer as any)._deleteListenerAttached = true;
+        }
+    };
+
+    const refreshTable = async () => {
+        try {
+            const response = await fetch(window.location.href);
+            const text = await response.text();
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(text, 'text/html');
+            
+            // Find the container by data attribute to be specific
+            const newContainer = doc.querySelector('div[data-datatable-id="permissions-registry-table"]');
+            const currentContainer = document.querySelector('div[data-datatable-id="permissions-registry-table"]');
+
+            if (newContainer && currentContainer) {
+                currentContainer.replaceWith(newContainer);
+                setupTableListeners(); // Re-attach listeners to the new element
+                document.dispatchEvent(new CustomEvent('datatable:init'));
+            }
+        } catch (e) {
+            console.error("Failed to refresh table", e);
+        }
+    };
+
+    const createForm = document.getElementById('create-permission-form') as HTMLFormElement;
+    const feedback = document.getElementById('form-feedback');
+
+    createForm?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const formData = new FormData(createForm);
+        
+        if (feedback) {
+            feedback.className = 'form-feedback feedback loading';
+            feedback.textContent = 'Creating permission...';
+            feedback.style.display = 'block';
+        }
+
+        const { data: result, error } = await actions.users.createPermission(formData);
+
+        if (error) {
+            if (feedback) {
+                feedback.className = 'form-feedback feedback error';
+                feedback.textContent = `Error: ${error.message}`;
+                feedback.style.display = 'block';
+            }
+        } else if (result?.success && result.permission) {
+             if (feedback) {
+                feedback.className = 'form-feedback feedback success';
+                feedback.textContent = `Permission '${result.permission.action}' created for module ${result.permission.resource}!`;
+                feedback.style.display = 'block';
+            }
+            createForm.reset();
+            await refreshTable();
+        }
+    });
+
+    // Use event delegation for delete actions to handle Datatable pagination/updates
+    document.addEventListener('astro:page-load', () => {
+        setupTableListeners();
+    });
+
+</script>

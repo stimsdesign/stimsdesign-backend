@@ -1,0 +1,440 @@
+---
+/**
+ * Users Module - Roles & Permissions
+ * Manage user roles and their associated granular permissions.
+ */
+
+export const prerender = false;
+
+// Module Menu Configuration
+export const sortOrder = 2;
+export const activeMatch = "/dashboard/users/role/";
+export const menuLabel = "Roles";
+
+import { db, getCachedQuery, CACHE_TTL } from "@stimsdesign/core/db.ts";
+import ModuleHeader from "../../components/layout/ModuleHeader.astro";
+import Datatable from "../../components/interface/Datatable.astro";
+import TableActions from "../../components/interface/TableActions.astro";
+import FormFeedback from "../../components/forms/FormFeedback.astro";
+
+interface RoleRow {
+    id: string;
+    name: string;
+    description: string | null;
+    weight: number;
+    user_count: number;
+}
+
+interface Permission {
+    id: string;
+    resource: string;
+    action: string;
+}
+
+// Fetch all permissions
+const permissions = await getCachedQuery('users:permissions:list', CACHE_TTL, async () => {
+    const { rows } = await db.query<Permission>('SELECT * FROM "permissions" ORDER BY resource ASC, action ASC');
+    return rows;
+});
+
+// Fetch all roles
+const roles = await getCachedQuery('users:roles:extended', CACHE_TTL, async () => {
+    const { rows } = await db.query<RoleRow>(`
+        SELECT
+            r.id,
+            r.name,
+            r.description,
+            r.weight,
+            COUNT(ur."userId")::int as user_count
+        FROM "roles" r
+        LEFT JOIN "user_roles" ur ON r.id = ur."roleId"
+        GROUP BY r.id
+        ORDER BY r.weight ASC
+    `);
+    return rows;
+});
+
+const validWeights = roles.filter(r => r.name.toLowerCase() !== 'user').map(r => r.weight);
+const nextWeight = validWeights.length > 0 ? Math.max(...validWeights) + 1 : 2;
+
+// Group permissions by resource for better UI
+const groupedPermissions = permissions.reduce((acc, p) => {
+    if (!acc[p.resource]) acc[p.resource] = [];
+    acc[p.resource].push(p);
+    return acc;
+}, {} as Record<string, typeof permissions>);
+
+// Dynamically discover all resources
+const rawModules = import.meta.glob('/src/modules/**/*.astro');
+const dynamicResources = new Set<string>();
+
+for (const path of Object.keys(rawModules)) {
+    if (path.includes('[')) continue;
+    
+    const parts = path.split('/src/modules/')[1].split('/');
+    if (parts.length === 2) {
+        const moduleName = parts[0].toUpperCase();
+        const fileName = parts[1].replace('.astro', '').toUpperCase();
+        
+        if (fileName === 'INDEX') {
+            dynamicResources.add(moduleName);
+        } else {
+            dynamicResources.add(`${moduleName} » ${fileName}`);
+        }
+    }
+}
+const allResources = [...new Set([...dynamicResources, ...Object.keys(groupedPermissions)])].sort();
+
+---
+
+<div class="roles-module">
+    <ModuleHeader title="User Roles" />
+
+    <!-- Create Role Form -->
+    <div class="form-container">
+        <form id="create-role-form">
+            <div class="form-section">
+                <h3>Create New Role</h3>
+                <div class="form-grid">
+                    <div class="input-row">
+                        <div class="input-group">
+                            <label for="roleName">Role Name</label>
+                            <input type="text" id="roleName" name="name" placeholder="e.g. Moderator" required />
+                        </div>
+                        <div class="input-group">
+                            <label for="roleWeight">Weight</label>
+                            <input type="number" id="roleWeight" name="weight" value={nextWeight} min="2" max="9998" required />
+                            <span class="small">&nbsp;Lower numbers have higher priority.</span>
+                        </div>
+                    </div>
+                    <div class="input-row">
+                        <div class="input-group">
+                            <label for="roleDesc">Description</label>
+                            <input type="text" id="roleDesc" name="description" placeholder="Short description of the role..." />
+                        </div>
+                    </div>
+                </div>
+                <h3>Set Role Permissions</h3>
+                <div class="form-grid">
+                    <div class="input-row">
+                        <div class="input-group">
+                            <label for="moduleSelect">Select Module or Sub-Module</label>
+                            <p class="small">Selecting a base Module will automatically select all its sub-modules.</p>
+                            <select id="moduleSelect" name="moduleSelect">
+                                <option value="" disabled selected>Select a module or sub-module...</option>
+                                {allResources.map(resource => (
+                                    <option value={resource}>{resource}</option>
+                                ))}
+                            </select>
+                        </div>
+                    </div>
+                    <div class="input-row">
+                        <div class="selection-box">
+                            {allResources.map((resource: string) => {
+                                const perms = groupedPermissions[resource] || [];
+                                return (
+                                <div class="checkbox-group" data-resource={resource} style="display: none;">
+                                    <span>{resource} <span class="remove" data-resource={resource} style="cursor: pointer; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; color: var(--text-muted); transition: color 0.15s ease;">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                                    </span></span>
+                                    <div class="checkbox-list">
+                                        {perms.map((p: Permission) => (
+                                            <label class="checkbox-option" style="min-width: unset;">
+                                                <input type="checkbox" name="permissions" value={p.id} />
+                                                <span class="checkmark"></span>
+                                                <span style="font-size: 0.85rem;">{p.action}</span>
+                                            </label>
+                                        ))}
+                                        {perms.length === 0 && <span class="text-muted small">No permissions defined.</span>}
+                                    </div>
+                                </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                </div>
+           </div>
+            
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary">Create Role</button>
+            </div>
+            <FormFeedback id="form-feedback" />
+        </form>
+    </div>
+
+    <!-- Roles Table -->
+    <Datatable id="roles-table" searchable={true} sortable={true} perPage={10} perPageSelect={[5, 10, 20]} showSystemDefaultsFilter={true}>
+        <table id="roles-table">
+            <thead>
+                <tr>
+                    <th>
+                        <span class="flex items-center">Role Name</span>
+                    </th>
+                    <th class="preferred asc">
+                        <span class="flex items-center">Weight</span>
+                    </th>
+                    <th>
+                        <span class="flex items-center">Description</span>
+                    </th>
+                    <th>
+                        <span class="flex items-center">Users</span>
+                    </th>
+                    <th data-sortable="false">
+                        <span class="flex items-center">Actions</span>
+                    </th>
+                </tr>
+            </thead>
+            <tbody>
+                {roles.map((role: RoleRow) => {
+                    const isSuperadminRole = role.name.toLowerCase() === 'superadmin';
+                    const isAdminRole = role.name.toLowerCase() === 'admin';
+                    const currentUserRole = Astro.locals.user?.role?.toLowerCase();
+                    const isCurrentUserSuperadmin = currentUserRole === 'superadmin';
+
+                    // Edit Button Logic
+                    // 1. Superadmin role: NEVER editable.
+                    // 2. Admin role: Editable ONLY by Superadmin.
+                    // 3. Other roles: Always editable.
+                    let canEdit = true;
+                    if (isSuperadminRole) canEdit = false;
+                    if (isAdminRole && !isCurrentUserSuperadmin) canEdit = false;
+
+                    return (
+                    <tr>
+                        <td>
+                            <a href={`/dashboard/users/role/${encodeURIComponent(role.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''))}`}>
+                                <strong>{role.name}</strong>
+                            </a>
+                        </td>
+                        <td>
+                            {role.name.toLowerCase() === 'user' ? '--' : role.weight}
+                        </td>
+                        <td>
+                            <span class="small">{role.description || "-"}</span>
+                        </td>
+                        <td>
+                            {role.user_count}
+                        </td>
+                        <td>
+                            <TableActions 
+                                editUrl={`/dashboard/users/role/${encodeURIComponent(role.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''))}?edit=true`}
+                                deleteId={role.id}
+                                deleteClass="delete-role"
+                                disabled={!canEdit || ['superadmin', 'admin', 'user'].includes(role.name.toLowerCase())}
+                                protectedMessage={isSuperadminRole ? "Superadmin role is protected" : (isAdminRole && !isCurrentUserSuperadmin) ? "Admin role can only be edited by Superadmin" : "Protected role"}
+                            />
+                        </td>
+                    </tr>
+                    );
+                })}
+            </tbody>
+        </table>
+        <FormFeedback id="table-feedback" />
+    </Datatable>
+</div>
+
+<script>
+    import { actions } from "astro:actions";
+
+    const refreshRoles = async () => {
+        try {
+            const url = new URL(window.location.href);
+            url.searchParams.set('__t', Date.now().toString());
+            const response = await fetch(url.toString());
+            const text = await response.text();
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(text, 'text/html');
+
+            // Refresh Container to ensure clean state
+            const newContainer = doc.querySelector('div[data-datatable-id="roles-table"]');
+            const currentContainer = document.querySelector('div[data-datatable-id="roles-table"]');
+
+            if (newContainer && currentContainer) {
+                // Replace content
+                currentContainer.replaceWith(newContainer);
+                
+                // Re-bind listeners
+                bindTableActions();
+
+                // Re-init Datatables
+                document.dispatchEvent(new CustomEvent('datatable:init')); 
+            }
+
+        } catch (e) {
+            console.error("Failed to refresh roles", e);
+        }
+    };
+
+    document.addEventListener('astro:page-load', () => {
+        bindTableActions();
+    });
+
+    const createForm = document.getElementById('create-role-form') as HTMLFormElement;
+    const feedback = document.getElementById('form-feedback');
+
+    // Picklist Logic
+    function initializePicklist() {
+        const select = document.getElementById('moduleSelect') as HTMLSelectElement;
+        const selectionBox = document.querySelector('.selection-box') as HTMLElement;
+        if (!select || !selectionBox) return;
+
+        select.addEventListener('change', (e) => {
+            const selectedResource = (e.target as HTMLSelectElement).value;
+            if (!selectedResource) return;
+
+            // Show selected group
+            const group = selectionBox.querySelector(`.checkbox-group[data-resource="${selectedResource}"]`) as HTMLElement;
+            if (group) {
+                group.style.display = 'block';
+            }
+            
+            // Show any sub-modules if a main module is selected.
+            // Example: "USERS" is selected, we should also show "USERS » ROLES"
+            const allGroups = selectionBox.querySelectorAll(`.checkbox-group`);
+            allGroups.forEach((g) => {
+                const res = (g as HTMLElement).dataset.resource;
+                if (res && res.startsWith(`${selectedResource} »`)) {
+                    (g as HTMLElement).style.display = 'block';
+                    // Hide the sub-module option in the select
+                    const subOption = select.querySelector(`option[value="${res}"]`) as HTMLOptionElement;
+                    if (subOption) {
+                        subOption.style.display = 'none';
+                        subOption.disabled = true;
+                    }
+                }
+            });
+
+            // Hide the selected option in the select
+            const option = select.querySelector(`option[value="${selectedResource}"]`) as HTMLOptionElement;
+            if (option) {
+                option.style.display = 'none';
+                option.disabled = true;
+            }
+            
+            // Reset select
+            select.value = "";
+        });
+
+        // Removal delegation
+        selectionBox.addEventListener('click', (e) => {
+            const removeBtn = (e.target as HTMLElement).closest('.remove');
+            if (!removeBtn) return;
+            
+            const resourceToRemove = (removeBtn as HTMLElement).dataset.resource;
+            if (!resourceToRemove) return;
+
+            const group = selectionBox.querySelector(`.checkbox-group[data-resource="${resourceToRemove}"]`) as HTMLElement;
+            if (group) {
+                group.style.display = 'none';
+                
+                // Clear checkboxes in this group
+                const checkboxes = group.querySelectorAll('input[type="checkbox"]');
+                checkboxes.forEach((cb) => (cb as HTMLInputElement).checked = false);
+            }
+
+            // Unhide the option
+            const option = select.querySelector(`option[value="${resourceToRemove}"]`) as HTMLOptionElement;
+            if (option) {
+                option.style.display = '';
+                option.disabled = false;
+            }
+            
+            // If the resource was a main module (e.g. "USERS"), we could optionally remove its sub-modules, 
+            // but for simplicity, we treat them individually once added or just uncheck/hide.
+            // Let's also hide shown sub-modules if they were spawned by this parent module
+            const allGroups = selectionBox.querySelectorAll(`.checkbox-group`);
+            allGroups.forEach((g) => {
+                const res = (g as HTMLElement).dataset.resource;
+                if (res && res.startsWith(`${resourceToRemove} »`)) {
+                    (g as HTMLElement).style.display = 'none';
+                    // Clear its checkboxes
+                    const subCheckboxes = g.querySelectorAll('input[type="checkbox"]');
+                    subCheckboxes.forEach((cb) => (cb as HTMLInputElement).checked = false);
+                    
+                    // Unhide sub-option
+                    const subOption = select.querySelector(`option[value="${res}"]`) as HTMLOptionElement;
+                    if (subOption) {
+                        subOption.style.display = '';
+                        subOption.disabled = false;
+                    }
+                }
+            });
+        });
+    }
+
+    // Initialize picklist
+    document.addEventListener('astro:page-load', () => {
+        initializePicklist();
+    });
+
+    // Create Role
+    createForm?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const formData = new FormData(createForm);
+        
+        if (feedback) {
+            feedback.className = 'form-feedback feedback loading';
+            feedback.textContent = 'Creating role...';
+            feedback.style.display = 'block';
+        }
+
+        const { data: result, error } = await actions.users.createRole(formData);
+
+        if (error) {
+            if (feedback) {
+                feedback.className = 'form-feedback feedback error';
+                feedback.textContent = `Error: ${error.message}`;
+            }
+        } else if (result?.success) {
+            if (feedback) {
+                 feedback.className = 'form-feedback feedback success';
+                feedback.textContent = 'Role created successfully!';
+            }
+            createForm.reset();
+            await refreshRoles();
+        }
+    });
+
+    function bindTableActions() {
+        // Use event delegation on the table container or body
+        // But since we have a specific table, let's try creating a single handler if not exists
+        // Actually, simple-datatables might completely swap the table.
+        // Best to attach to the #roles-registry-table, and since we re-init it, we might need to re-attach or attach to a parent.
+        // Let's attach to document body but filter heavily, or attach to the .table-container
+        
+        const tableContainer = document.querySelector('.table-container');
+        if (!tableContainer) return;
+
+        // Remove old listener if we were using a named function, but here we used anonymous.
+        // To avoid duplicate listeners on re-bind, we can check a flag or just use a robust delegation that is set once globally.
+        // But since this function is called on refresh, let's use a "initialized" flag on the container?
+        // Or simpler: Just re-attach to the new table elements? 
+        // No, simple-datatables re-renders on page change/search. Delegation is best.
+        
+        // Let's move the listener setup OUTSIDE of refresh logic, to the global scope (once).
+        // But I need to be careful about strict mode and module scoping.
+    }
+
+    // Global delegation for delete buttons
+    document.addEventListener('click', async (e) => {
+        const target = e.target as HTMLElement;
+        const deleteBtn = target.closest('.delete-role');
+        
+        if (deleteBtn) {
+            const id = (deleteBtn as HTMLElement).dataset.id;
+            if (id) {
+                const icon = deleteBtn.querySelector('svg')?.outerHTML;
+                (window as any).stimsToast.confirm('Are you sure you want to delete this role? This action cannot be undone.', async () => {
+                    const { error } = await actions.users.deleteRole({ id });
+                    
+                    if (error) {
+                        (window as any).stimsToast.show(`Error: ${error.message}`, 'error');
+                    } else {
+                        (window as any).stimsToast.show('Role deleted successfully!');
+                        await refreshRoles();
+                    }
+                }, null, 'warning', icon);
+            }
+        }
+    });
+</script>

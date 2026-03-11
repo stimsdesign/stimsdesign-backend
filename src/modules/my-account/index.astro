@@ -1,0 +1,20 @@
+---
+export const prerender = false;
+/**
+ * Account Module
+ * Placeholder for user account management functionality.
+ *
+ * Related files:
+ *   - src/pages/dashboard/[...path].astro (Dispatcher)
+ *   - src/layouts/DashboardLayout.astro
+ */
+export const sortOrder = 0;
+export const menuLabel = "Overview";
+const { user } = Astro.locals;
+const displayName = user?.name || "Guest";
+---
+
+<div class="account-module module-splash">
+    <h2>Account Overview</h2>
+    <p class="info">Hello, {displayName}. Manage your account here.</p>
+</div>

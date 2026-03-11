@@ -1,0 +1,180 @@
+---
+export const prerender = false;
+import PortalEntryIcon from "../../icons/portal-entry.svg";
+import Avatar from "../../components/elements/Avatar.astro";
+
+const pathname = Astro.url.pathname;
+const pathSegments = pathname.split('/').filter(Boolean);
+const moduleSegment = pathSegments[1] || 'dashboard';
+
+const isMyAccountActive = moduleSegment === 'my-account';
+const isDashboardActive = moduleSegment !== 'my-account';
+
+const { user } = Astro.locals;
+---
+<nav id="main-nav-observer" class="main-nav">
+    <ul>
+        <li class="nav-avatar">
+            <Avatar user={user as any} />
+        </li>
+        <li class="my-account">
+            <a href="/dashboard/my-account" class:list={[{ active: isMyAccountActive }]}>
+                {isMyAccountActive && <span class="status-dot green"></span>}
+                <span>My&nbsp;</span>Account
+            </a>
+        </li>
+        <li class="dashboard">
+            <a href="/dashboard" class:list={[{ active: isDashboardActive }]}>
+                {isDashboardActive && <span class="status-dot green"></span>}
+                Dashboard
+            </a>
+        </li>
+        <li class="logout">
+            <a href="#" data-logout-btn class="logout-link">
+                <span>Logout</span><PortalEntryIcon />
+            </a>
+        </li>
+    </ul>
+</nav>
+
+<style is:global>
+    nav.main-nav {
+        display: flex;
+        width: 100%;
+        height: 80px;
+        box-sizing: border-box;
+        z-index: 1000;
+        align-items: center;
+
+
+        /* Smooth Fade Transition */
+        transition:
+            opacity 0.4s ease,
+            visibility 0.4s ease,
+            transform 0.4s ease,
+            height 0.4s ease;
+        opacity: 1;
+        visibility: visible;
+    }
+
+    /* Target this class via JS in MobileNav or here if scroll logic exists */
+    nav.is-hidden {
+        opacity: 0;
+        visibility: hidden;
+        transform: translateY(-10px);
+        pointer-events: none;
+    }
+
+    @media (max-width: 768px) {
+        nav.main-nav {
+            display: flex !important;
+            background-color: var(--color-background);
+            border-bottom: 1px solid var(--color-accent);
+            position: fixed;
+            height: 55px;
+            align-items: center;
+        }
+        nav.main-nav a span {
+            display: none;
+        }
+
+        
+    }
+
+
+    nav.main-nav ul {
+        width: 100%;
+        list-style: none;
+        display: flex;
+        gap: 1rem;
+        position: relative;
+        align-items: center;
+    }
+
+    @media (max-width: 768px) {
+        nav.main-nav ul {
+            padding: 0 1rem;
+        }
+    }
+
+    nav.main-nav ul > li:last-child {
+        margin-left: auto;
+    }
+
+    nav.main-nav a {
+        display: flex;
+        align-items: center;
+        justify-content: right;
+        color: var(--color-foreground);
+        text-decoration: none;
+        font-weight: var(--weight-thin);
+        text-transform: uppercase;
+        text-align: center;
+        white-space: nowrap;
+        font-size: var(--size-lg);
+        position: relative;
+    }
+
+
+    nav.main-nav a svg {
+        display: inline-block;
+        width: 1.2cqi;
+        min-width: 1.2rem;
+        height: 1.2cqi;
+        min-height: 1.2rem;
+        margin-left: 0.5rem;
+    }
+
+    @media (min-width: 769px) {
+        nav.main-nav a {
+        padding: 1rem 1cqi;
+        border-radius: 10px;
+        transition:
+            color 0.3s ease,
+            background-color 0.3s ease,
+            border-bottom 0.3s ease,
+            background-image 0.3s ease;
+        border-bottom: solid 4px transparent;
+        }
+        nav.main-nav ul > li > a:hover {
+            color: white;
+            text-decoration: none;
+            background-color: var(--color-secondary);
+            border-bottom: solid 4px var(--color-secondary-dark);
+        }
+    }
+
+
+    /* Position adjustment for status dot in horizontal nav */
+    nav.main-nav a .status-dot {
+        position: static;
+        display: inline-block;
+        vertical-align: middle;
+        margin-right: 0.5rem;
+        margin-top: -2px;
+    }
+
+
+</style>
+
+<script>
+    import { authClient } from "../../utils/auth-client";
+    import { navigate } from "astro:transitions/client";
+
+    document.addEventListener("astro:page-load", () => {
+        const logoutBtn = document.querySelector('[data-logout-btn]');
+
+        if (logoutBtn) {
+            logoutBtn.addEventListener("click", async (e) => {
+                e.preventDefault();
+                await authClient.signOut({
+                    fetchOptions: {
+                        onSuccess: () => {
+                            navigate("/portal");
+                        },
+                    },
+                });
+            });
+        }
+    });
+</script>

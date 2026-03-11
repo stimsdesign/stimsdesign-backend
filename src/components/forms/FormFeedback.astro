@@ -1,0 +1,72 @@
+---
+/**
+ * FormFeedback Component
+ * Standardizes form feedback messages (success, error, info).
+ * 
+ * Props:
+ * - id: (Optional) ID for the feedback element.
+ * - type: (Optional) 'success' | 'error' | 'info' | 'loading'
+ * - message: (Optional) Initial message to display.
+ * - class: (Optional) Extra classes.
+ */
+interface Props {
+    id?: string;
+    type?: 'success' | 'error' | 'info' | 'loading';
+    message?: string;
+    class?: string;
+}
+
+const { 
+    id, 
+    type = 'info', 
+    message = '', 
+    class: className = '' 
+} = Astro.props;
+---
+
+<div 
+    id={id} 
+    class={`form-feedback feedback ${type} ${className}`}
+    style={message ? 'display: block;' : 'display: none;'}
+>
+    {message}
+</div>
+
+<style>
+    .form-feedback {
+        margin-top: 1rem;
+        padding: 1rem;
+        border-radius: 8px;
+        font-size: var(--size-md);
+        line-height: 1.5;
+        transition: all 0.3s ease;
+    }
+
+    .form-feedback.success {
+        display: block;
+        background: rgba(16, 185, 129, 0.1);
+        color: #34d399;
+        border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+
+    .form-feedback.error {
+        display: block;
+        background: rgba(239, 68, 68, 0.1);
+        color: #f87171;
+        border: 1px solid rgba(239, 68, 68, 0.3);
+    }
+
+    .form-feedback.info {
+        display: block;
+        background: rgba(59, 130, 246, 0.1);
+        color: #60a5fa;
+        border: 1px solid rgba(59, 130, 246, 0.3);
+    }
+
+    .form-feedback.loading {
+        display: block;
+        background: rgba(255, 255, 255, 0.05);
+        color: var(--color-foreground-dark);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+</style>

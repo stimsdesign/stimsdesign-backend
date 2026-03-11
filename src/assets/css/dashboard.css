@@ -1,0 +1,9 @@
+@import "tailwindcss";
+@import "./styles.css" layer(base);
+@import "flowbite/src/themes/default";
+@source "../../node_modules/flowbite";
+@import "simple-datatables/dist/style.css";
+
+p, blockquote, figcaption {
+    max-width: 100%;
+}

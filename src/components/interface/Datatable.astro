@@ -1,0 +1,286 @@
+---
+/**
+ * Datatable Component
+ * Wrapper around simple-datatables to provide a consistent table experience.
+ * 
+ * Usage:
+ * <Datatable id="my-table" searchable={true} sortable={true}>
+ *   <table>...</table>
+ * </Datatable>
+ */
+
+interface Props {
+    id: string; // The ID of the table element INSIDE the slot
+    searchable?: boolean;
+    sortable?: boolean;
+    perPage?: number;
+    perPageSelect?: number[];
+    classes?: string;
+    showSystemDefaultsFilter?: boolean; // Toggles the custom checkbox injection
+}
+
+const { 
+    id, 
+    searchable = true, 
+    sortable = true, 
+    perPage = 10, 
+    perPageSelect = [5, 10, 20, 50],
+    classes = "",
+    showSystemDefaultsFilter = false
+} = Astro.props;
+
+// Pass props to client-side script via data attributes on the wrapper
+const options = {
+    searchable,
+    sortable,
+    perPage,
+    perPageSelect,
+    labels: {
+        placeholder: "Search...",
+        perPage: "entries per page",
+        noRows: "No entries found",
+        info: "Showing {start} to {end} of {rows} entries",
+    },
+    showSystemDefaultsFilter
+};
+---
+
+<div class={`table-container ${classes}`} data-datatable-id={id} data-options={JSON.stringify(options)}>
+    <slot />
+</div>
+
+<script>
+    // @ts-ignore
+    import { DataTable } from "simple-datatables";
+
+    // Store instances to allow destruction
+    const instances: Record<string, any> = {};
+
+    const init = (container: HTMLElement) => {
+        const tableId = container.dataset.datatableId;
+        const optionsStr = container.dataset.options;
+        
+        if (!tableId || !optionsStr) return;
+
+        const tableElement = container.querySelector(`#${tableId}`);
+        if (!tableElement) return;
+
+        // Destroy existing instance if any
+        if (instances[tableId]) {
+            instances[tableId].destroy();
+            delete instances[tableId];
+        }
+
+        try {
+            const options = JSON.parse(optionsStr);
+            
+            // Detect default sort column (class "preferred") BEFORE init
+            // simple-datatables might strip original classes or rebuild header
+            let sortIndex = -1;
+            let sortDirection = 'asc';
+
+            const originalHeaders = tableElement.querySelectorAll('thead th');
+            const columnConfigs: any[] = [];
+            
+            originalHeaders.forEach((header, index) => {
+                const th = header as HTMLElement;
+                
+                // Detect default sort column
+                if (th.classList.contains('preferred')) {
+                    sortIndex = index;
+                    sortDirection = th.classList.contains('desc') || th.dataset.sortDirection === 'desc' ? 'desc' : 'asc';
+                }
+
+                // Detect disabled sorting
+                if (th.dataset.sortable === "false" || th.getAttribute("data-sortable") === "false") {
+                    columnConfigs.push({ select: index, sortable: false });
+                }
+            });
+
+            // Merge detected column configs into options
+            if (columnConfigs.length > 0) {
+                options.columns = [...(options.columns || []), ...columnConfigs];
+            }
+
+            const dt = new (DataTable as any)(tableElement, options);
+            instances[tableId] = dt;
+            
+            // Check for default sort column (class "preferred")
+            // We need to do this after a microtask to ensure table is ready, although sync init usually works.
+            if (sortIndex !== -1) {
+                // simple-datatables usually sorts on init if config is passed, but we are doing it post-init via API
+                // We might need to handle this via options if possible, but API is fine.
+                if (dt.columns && typeof dt.columns.sort === 'function') {
+                    dt.columns.sort(sortIndex, sortDirection);
+                }
+            }
+
+            // Inject Custom "Hide System Defaults" Checkbox if requested
+            if (options.showSystemDefaultsFilter) {
+                dt.on('datatable.init', () => {
+                    const topContainer = container.querySelector('.datatable-top');
+                    const dropdown = container.querySelector('.datatable-dropdown');
+                    
+                    if (topContainer && dropdown) {
+                        const filterWrap = document.createElement('div');
+                        filterWrap.className = 'datatable-system-filter';
+                        filterWrap.innerHTML = `
+                            <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.875rem; color: var(--color-foreground); cursor: pointer;">
+                                <input type="checkbox" class="hide-defaults-checkbox" />
+                                hide system defaults
+                            </label>
+                        `;
+                        
+                        dropdown.parentNode?.insertBefore(filterWrap, dropdown.nextSibling);
+
+                        // Attach native filter method
+                        const cb = filterWrap.querySelector('.hide-defaults-checkbox') as HTMLInputElement;
+                        
+                        // We need to add a custom column definition to the first column 
+                        // that can execute a custom function against the raw cell HTML payload.
+                        // Simple-datatables applies column definitions via index.
+                        
+                        // Since we don't always know which column contains the 'disabled' attribute, 
+                        // and simple-datatables filters per-column, we will apply a filter to column 0 
+                        // but actually inspect the entire row's HTML by going up to the parent element.
+                        // Wait, simple-datatables filter function only receives the cell content string for that specific column.
+                        // Let's use the API to loop through dt.data.data and remove/re-insert rows? No, that destroys data.
+                        
+                        // Let's look at the simple-datatables issue carefully.
+                        // The filter function gets the inner HTML data of a cell (`cell.data`).
+                        // We can assign our filter to the LAST column (usually 'Actions') where the disabled button lives.
+                        if (dt.columns && typeof dt.columns.filter === 'function' && dt.data.headings.length > 0) {
+                            const lastColIndex = dt.data.headings.length - 1;
+                            
+                            // Inject custom filter definition into the settings array if not already present
+                            if (!dt.columns.settings[lastColIndex].filter) {
+                                dt.columns.settings[lastColIndex].filter = [];
+                            }
+                            
+                            // Add our custom filter function
+                            const systemDefaultFilter = (cellData: any) => {
+                                // In simple-datatables v6+, cellData is a Virtual DOM object array, not a string of HTML.
+                                // We can serialize the VDOM to search for the disabled attribute anywhere in its tree.
+                                const cellString = JSON.stringify(cellData).toLowerCase();
+                                return !cellString.includes('"disabled"'); // Return TRUE to KEEP, FALSE to FILTER
+                            };
+                            
+                            dt.columns.settings[lastColIndex].filter.push(systemDefaultFilter);
+                            
+                            cb.addEventListener('change', (e) => {
+                                if ((e.target as HTMLInputElement).checked) {
+                                    dt.columns.filter(lastColIndex); // Activates the first filter in the array
+                                    
+                                    // Calculate how many were hidden
+                                    // When filtered, dt.data.data.length is the total, but we only see dt.pages
+                                    // Wait, simple-datatables modifies the view, but the original rows array isn't exposed directly as a length vs filtered length easily unless we check `dt._searchData` or the filtered array.
+                                    // Actually, we can just calculate it: total rows before filter vs total rows after filter
+                                    const totalRows = dt.data.data.length;
+                                    const filteredRowsCount = dt.pages.reduce((acc: number, page: any[]) => acc + page.length, 0);
+                                    const hiddenCount = totalRows - filteredRowsCount;
+                                    
+                                    dt.options.labels.info = `Showing {start} to {end} of {rows} entries <span class="text-neutral-500 ml-1">(${hiddenCount} hidden)</span>`;
+                                    dt.update();
+                                } else {
+                                    // simple-datatables filter API toggles off if you call filter with no arguments or if you manually clear the state
+                                    dt.columns._state.filters[lastColIndex] = undefined;
+                                    dt._currentPage = 1;
+                                    dt.options.labels.info = "Showing {start} to {end} of {rows} entries";
+                                    dt.update();
+                                }
+                            });
+                        }
+                    }
+                });
+            }
+
+        } catch (e) {
+            console.error(`Failed to init DataTable for ${tableId}`, e);
+        }
+            
+    };
+
+    const initAll = () => {
+        document.querySelectorAll('.table-container[data-datatable-id]').forEach(el => {
+            init(el as HTMLElement);
+        });
+    };
+
+    // Initialize on page load and after View Transitions
+    document.addEventListener('astro:page-load', () => {
+        initAll();
+    });
+
+    // Custom event to trigger re-init (e.g. after HTMX-like content swaps)
+    document.addEventListener('datatable:init', (() => {
+        // Use a slight delay to ensure DOM is ready
+        requestAnimationFrame(() => {
+             initAll();
+        });
+    }) as EventListener);
+
+</script>
+
+<style is:global>
+    /* Styles for simple-datatables to match the theme */
+    .datatable-wrapper.no-header .datatable-container {
+        border-bottom: 1px solid var(--color-border);
+    }
+
+    .datatable-top, .datatable-bottom {
+        padding: 1rem;
+    }
+
+    .datatable-wrapper {
+        background: var(--color-background-card);
+        border-radius: var(--radius-md);
+        box-shadow: var(--shadow-sm);
+        overflow: hidden;
+    }
+
+    .datatable-input {
+        background: var(--color-background);
+        border: 1px solid var(--color-border);
+        color: var(--color-foreground);
+        padding: 0.5rem 1rem;
+        border-radius: var(--radius-sm);
+    }
+    
+    .datatable-selector {
+        background: transparent;
+        border: 1px solid var(--color-border);
+        color: var(--color-foreground);
+        padding: 0.5rem 2rem 0.5rem 1rem;
+        border-radius: var(--radius-sm);
+    }
+
+    .datatable-table {
+        border-collapse: collapse;
+        width: 100%;
+    }
+    
+    /* Pagination Buttons */
+    .datatable-pagination .datatable-active a,
+    .datatable-pagination .datatable-active a:focus,
+    .datatable-pagination .datatable-active a:hover {
+        background-color: var(--color-primary);
+        color: white;
+        cursor: default;
+    }
+
+    /* Custom System Defaults Filter */
+    .datatable-top {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 1rem;
+    }
+    
+    .datatable-system-filter {
+        margin-right: auto;
+    }
+    
+    .datatable-search {
+        margin-left: auto;
+    }
+</style>

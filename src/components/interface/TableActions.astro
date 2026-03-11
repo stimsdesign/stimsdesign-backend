@@ -1,0 +1,127 @@
+---
+/**
+ * TableActions Component
+ * Standardizes action buttons within Datatable rows.
+ * 
+ * Props:
+ * - editUrl: (Optional) URL for the edit action.
+ * - viewUrl: (Optional) URL for the view action.
+ * - deleteId: (Optional) ID for the delete action (triggers .delete-* class).
+ * - deleteClass: (Optional) The specific delete class (e.g., "delete-user", "delete-role").
+ * - resetEmail: (Optional) Email for password reset action (triggers .reset-pw class).
+ * - disabled?: boolean
+ * - protectedMessage?: string (Tooltip for disabled state)
+ */
+import EditIcon from "../../icons/edit.svg";
+import TrashIcon from "../../icons/trash.svg";
+import EyeIcon from "../../icons/eye.svg";
+
+interface Props {
+    editUrl?: string;
+    viewUrl?: string;
+    deleteId?: string;
+    deleteClass?: string;
+    resetEmail?: string;
+    disabled?: boolean;
+    protectedMessage?: string;
+    class?: string;
+}
+
+const { 
+    editUrl, 
+    viewUrl, 
+    deleteId, 
+    deleteClass = "delete-action",
+    resetEmail,
+    disabled = false, 
+    protectedMessage = "This item is protected",
+    class: className = ""
+} = Astro.props;
+---
+
+<div class={`table-actions flex items-center gap-2 ${className}`}>
+    {viewUrl && (
+        <a href={viewUrl} class="btn-icon" title="View Details">
+            <EyeIcon />
+        </a>
+    )}
+
+    {editUrl && (
+        disabled ? (
+            <button class="btn-icon disabled" disabled title={protectedMessage}>
+                <EditIcon />
+            </button>
+        ) : (
+            <a href={editUrl} class="btn-icon" title="Edit">
+                <EditIcon />
+            </a>
+        )
+    )}
+
+    {resetEmail && (
+        <button class="btn-icon reset-pw" data-email={resetEmail} title="Reset Password">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
+            </svg>
+        </button>
+    )}
+
+    {deleteId && (
+        disabled ? (
+            <button class="btn-icon btn-delete disabled" disabled title={protectedMessage}>
+                <TrashIcon />
+            </button>
+        ) : (
+            <button class={`btn-icon btn-delete ${deleteClass}`} data-id={deleteId} title="Delete">
+                <TrashIcon />
+            </button>
+        )
+    )}
+
+    <slot />
+</div>
+
+<style>
+    .btn-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        color: var(--color-foreground-dark);
+        transition: all 0.2s ease;
+        cursor: pointer;
+    }
+
+    .btn-icon.btn-delete {
+        background: rgba(239, 68, 68, 0.05);
+        border: 1px solid rgba(239, 68, 68, 0.1);
+        color: rgba(248, 113, 113, 0.7);
+    }
+
+    .btn-icon:hover:not(:disabled) {
+        background: rgba(255, 255, 255, 0.1);
+        border-color: rgba(255, 255, 255, 0.2);
+        color: white;
+    }
+
+    .btn-icon.btn-delete:hover:not(:disabled) {
+        background: rgba(239, 68, 68, 0.1);
+        border-color: rgba(239, 68, 68, 0.3);
+        color: #f87171;
+    }
+
+    .btn-icon:disabled, .btn-icon.disabled {
+        opacity: 0.3;
+        cursor: not-allowed;
+    }
+
+    /* SVG Sizing */
+    .btn-icon :global(svg) {
+        width: 18px;
+        height: 18px;
+    }
+</style>

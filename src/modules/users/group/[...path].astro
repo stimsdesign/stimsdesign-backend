@@ -1,0 +1,498 @@
+---
+/**
+ * Users Module - Group Details
+ * Displays details for a specific group.
+ * 
+ * Path: /dashboard/users/group/[group-slug]
+ */
+export const prerender = false;
+
+// Module Menu Configuration
+export const menuSkip = true;
+
+import { db, getCachedQuery, CACHE_TTL } from "@stimsdesign/core/db.ts";
+import ModuleHeader from "../../../components/layout/ModuleHeader.astro";
+import Datatable from "../../../components/interface/Datatable.astro";
+import EyeIcon from "../../../icons/eye.svg";
+import TrashIcon from "../../../icons/trash.svg";
+import Avatar from "../../../components/elements/Avatar.astro";
+import FormFeedback from "../../../components/forms/FormFeedback.astro";
+
+const { path } = Astro.params;
+const segments = path ? path.split('/').filter(Boolean) : [];
+// segments: ['users', 'group', 'group-slug']
+const groupSlug = segments.length > 2 ? segments[segments.length - 1] : null;
+
+interface GroupDetail {
+    id: string;
+    name: string;
+    description: string | null;
+    minRoleWeight: number;
+    createdAt: Date;
+    user_count: number;
+}
+
+interface UserSummary {
+    id: string;
+    name: string;
+    email: string;
+    joinedAt: Date;
+    image: string | null;
+    custom_image: string | null;
+    avatar_bg: string | null;
+    avatar_fg: string | null;
+}
+
+let group: GroupDetail | undefined;
+let groupError: string | null = null;
+let groupMembers: UserSummary[] = [];
+
+if (groupSlug) {
+    // Lookup group by slug (name)
+    group = await getCachedQuery(`users:groups:detail:slug:${groupSlug}`, CACHE_TTL, async () => {
+        const { rows } = await db.query<GroupDetail>(`
+            SELECT 
+                g.id, 
+                g.name, 
+                g.description, 
+                g."minRoleWeight",
+                g."createdAt",
+                COUNT(ug."userId")::int as user_count
+            FROM "groups" g
+            LEFT JOIN "user_groups" ug ON g.id = ug."groupId"
+            WHERE TRIM(BOTH '-' FROM REGEXP_REPLACE(LOWER(g.name), '[^a-z0-9]+', '-', 'g')) = $1
+            GROUP BY g.id
+        `, [groupSlug.toLowerCase()]);
+        return rows[0];
+    });
+
+    if (group) {
+        // Fetch group members
+        groupMembers = await getCachedQuery(`users:groups:members:${group.id}`, CACHE_TTL, async () => {
+            const { rows } = await db.query<UserSummary>(`
+                SELECT u.id, u.name, u.email, u.image, u.custom_image, u.avatar_bg, u.avatar_fg
+                FROM "user" u
+                JOIN "user_groups" ug ON u.id = ug."userId"
+                WHERE ug."groupId" = $1
+                ORDER BY u.name ASC
+            `, [group!.id]);
+            return rows;
+        });
+    } else {
+        groupError = "Group not found.";
+    }
+} else {
+    groupError = "No group specified.";
+}
+
+// Fetch all roles for the dropdown
+const allRoles = await getCachedQuery('users:roles:form:group:edit', CACHE_TTL, async () => {
+    const { rows } = await db.query('SELECT id, name, weight FROM "roles" WHERE name != \'Superadmin\' ORDER BY weight ASC');
+    return rows;
+});
+
+// Fetch ALL users but with their "active" role weight (lowest weight/highest authority)
+const allUsers = await getCachedQuery('users:list:extended:group:edit', CACHE_TTL, async () => {
+    const { rows } = await db.query<UserSummary & { active_role_weight: number }>(`
+        SELECT 
+            u.id, 
+            u.name, 
+            u.email,
+            COALESCE(MIN(r.weight), 99) as active_role_weight
+        FROM "user" u
+        LEFT JOIN "user_roles" ur ON u.id = ur."userId"
+        LEFT JOIN "roles" r ON ur."roleId" = r.id
+        GROUP BY u.id
+        ORDER BY u.name ASC
+    `);
+    return rows;
+});
+
+const isEditMode = Astro.url.searchParams.get("edit") === "true";
+
+---
+
+{groupError ? (
+     <div class="groups-module">
+        <ModuleHeader title="Group Not Found" backUrl="/dashboard/users/groups" backLabel="Back to Groups" />
+    </div>
+) : (
+    <div class="groups-module">
+        <ModuleHeader 
+            title={group!.name}
+            backUrl={isEditMode ? Astro.url.pathname : "/dashboard/users/groups"}
+            backLabel={isEditMode ? "Return to Group" : "Back to Groups"}
+        >
+            {isEditMode && (
+                <svg slot="title-icon" class="w-10 h-10 text-white/50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path>
+                </svg>
+            )}
+        </ModuleHeader>
+        {isEditMode ? (
+
+            <form id="edit-group-form" method="POST" class="form-container">
+                <h5>Details</h5>
+                <input type="hidden" name="id" value={group!.id} />
+                <div class="form-grid">
+                    <div class="input-group">
+                        <label for="name">Group Name</label>
+                        <input type="text" id="name" name="name" value={group!.name} class="input" required />
+                    </div>
+
+                    <div class="input-group">
+                        <label for="description">Description</label>
+                        <textarea id="description" name="description" class="input">{group!.description}</textarea>
+                    </div>
+
+                    <div class="input-group">
+                        <label for="minRoleWeight">Minimum Role Criteria</label>
+                        <p class="small">Only users with this role or higher authority can be added to this group.</p>
+                        <select id="minRoleWeight" name="minRoleWeight">
+                            <option value="99" selected={group!.minRoleWeight >= 99}>Any Role</option>
+                            {allRoles.map((r: any) => <option value={r.weight} selected={group!.minRoleWeight === r.weight}>{r.name}</option>)}
+                        </select>
+                    </div>
+
+                </div>
+
+                <div class="form-actions">
+                    <button type="submit" class="btn btn-primary">Save Changes</button>
+                    <button type="button" id="delete-group-btn" class="btn btn-delete" data-group-id={group!.id}>Delete Group</button>
+                </div>
+                <FormFeedback id="edit-group-feedback" />
+            </form>
+            <div class="form-container">
+                <form id="add-user-form">
+                    <input type="hidden" name="groupId" value={group!.id} />
+                    <div class="form-section">
+                        <h3>Add User to Group</h3>
+                        <div class="form-grid">
+                            <div class="input-group">
+                                <label>Select Users</label>
+                                <select id="userId" name="_userId_selector">
+                                    <option value="">- Add User -</option>
+                                    {allUsers
+                                        .filter((u: any) => u.active_role_weight <= (group!.minRoleWeight ?? 99))
+                                        .map((u: any) => <option value={u.id}>{u.name} ({u.email})</option>)
+                                    }
+                                </select>
+                                <div id="selected-users" class="selected-options"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">Add Member</button>
+                    </div>
+                    <FormFeedback id="add-user-feedback" />
+                </form>
+
+                <hr class="my-8 border-white/10" />
+
+                <form id="add-role-form">
+                    <input type="hidden" name="groupId" value={group!.id} />
+                    <div class="form-section">
+                        <h3>Add Users by Role</h3>
+                        <p class="text-sm text-gray-400 mb-4">Bulk add all users who have the selected role.</p>
+                        <div class="form-grid">
+                            <div class="input-group">
+                                <label>Select Roles</label>
+                                <select id="roleId" name="_roleId_selector">
+                                    <option value="">- Add Role -</option>
+                                    {allRoles
+                                        .filter((r: any) => r.weight <= (group!.minRoleWeight ?? 99))
+                                        .map((r: any) => <option value={r.id}>{r.name} (Weight: {r.weight})</option>)
+                                    }
+                                </select>
+                                <div id="selected-roles" class="selected-options"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">Add Members by Role</button>
+                    </div>
+                    <FormFeedback id="add-role-feedback" />
+                </form>
+            </div>
+
+
+        ) : (
+            <div class="module-card">
+                <h5>Details</h5>
+                <ul class="properties-list">
+                    <li>
+                        <strong>Name:</strong>
+                        {group!.name}
+                    </li>
+                    <li>
+                        <strong>Description:</strong>
+                        {group!.description || "No description"}
+                    </li>
+                    <li>
+                        <strong>Minimum Role Criteria:</strong>
+                        {(() => {
+                            const role = allRoles.find((r: any) => r.weight === group!.minRoleWeight);
+                            return role ? `${role.name} (${role.weight})` : (group!.minRoleWeight >= 99 ? "Any Role (99)" : `Weight ${group!.minRoleWeight}`);
+                        })()}
+                    </li>
+                    <li>
+                        <strong>Member Count:</strong>
+                        {group!.user_count}
+                    </li>
+                    <li>
+                        <strong>Created:</strong>
+                        {new Date(group!.createdAt).toLocaleDateString()}
+                    </li>
+                </ul>
+            </div>
+            <div class="mb-16"><a href={`?edit=true`} class="btn btn-primary">Edit Group</a></div>
+
+
+        )}
+
+            <h5>Group Members</h5>
+            <div class="mt-8">
+                <Datatable id="group-members-table-edit" searchable={true} sortable={true} perPage={10} classes="table-container">
+                    <table id="group-members-table-edit">
+                        <thead>
+                            <tr>
+                                <th class="preferred desc"><span>Name</span></th>
+                                <th><span>Email</span></th>
+                                <th><span>Actions</span></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {groupMembers.map((member) => {
+                                return (
+                                <tr>
+                                    <td>
+                                        <div class="flex items-center gap-3">
+                                            <Avatar user={member!} />
+                                            <a href={`/dashboard/users/user/${encodeURIComponent(member.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''))}`}>
+                                                <strong>{member.name}</strong>
+                                            </a>
+                                        </div>
+                                    </td>
+                                    <td>{member.email}</td>
+                                    <td>
+                                        <div class="flex items-center gap-2">
+                                            <a href={`/dashboard/users/user/${encodeURIComponent(member.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''))}`} class="btn-icon" title="View Profile">
+                                                <EyeIcon />
+                                            </a>
+                                            <button class="btn-icon btn-delete remove-user-from-group" data-user-id={member.id} data-group-id={group!.id} title="Remove User from Group">
+                                                <TrashIcon />
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                                );
+                            })}
+                            {groupMembers.length === 0 && (
+                                <tr>
+                                    <td colspan="3" class="text-center">No members in this group.</td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </Datatable>
+            </div>        
+    </div>
+)}
+
+<script>
+    import { actions } from "astro:actions";
+    import { navigate } from "astro:transitions/client";
+    
+    document.addEventListener('astro:page-load', () => {
+
+        const editGroupForm = document.getElementById('edit-group-form') as HTMLFormElement;
+        const feedback = document.getElementById('edit-group-feedback');
+
+        if (editGroupForm && feedback) {
+            editGroupForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                
+                const formData = new FormData(editGroupForm);
+                feedback.style.display = 'block';
+                feedback.className = 'form-feedback feedback loading';
+                feedback.textContent = 'Saving changes...';
+                feedback.setAttribute('data-type', 'loading');
+                feedback.setAttribute('data-message', 'Saving changes...');
+
+                const { data: result, error } = await actions.users.updateGroup(formData);
+
+                if (error) {
+                    feedback.setAttribute('data-type', 'error');
+                    feedback.setAttribute('data-message', `Error: ${error.message}`);
+                } else if (result?.success) {
+                    // Reload to apply changes (name slug update or minRoleWeight logic)
+                    navigate(window.location.pathname, { history: 'replace' });
+                }
+            });
+
+            // Handle Delete Group
+            const deleteBtn = document.getElementById('delete-group-btn');
+            if (deleteBtn) {
+                deleteBtn.addEventListener('click', async () => {
+                   const groupId = deleteBtn.getAttribute('data-group-id');
+                   const icon = deleteBtn.querySelector('svg')?.outerHTML;
+                   (window as any).stimsToast.confirm('Are you sure you want to delete this group? This action cannot be undone.', async () => {
+                       const { error } = await actions.users.deleteGroup({ id: groupId! });
+                       if (error) {
+                           (window as any).stimsToast.show(`Error deleting group: ${error.message}`, 'error');
+                       } else {
+                           (window as any).stimsToast.show('Group deleted successfully!');
+                           navigate('/dashboard/users/groups');
+                       }
+                   }, null, 'warning', icon);
+                });
+            }
+        }
+    });
+
+    document.addEventListener('astro:page-load', () => {
+       const addUserForm = document.getElementById('add-user-form') as HTMLFormElement;
+       const addFeedback = document.getElementById('add-user-feedback');
+
+       if (addUserForm && addFeedback) {
+            // Bind Multi-Select
+            bindMultiSelect('userId', 'selected-users', 'userIds');
+
+            addUserForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const formData = new FormData(addUserForm);
+                
+                addFeedback.setAttribute('data-type', 'loading');
+                addFeedback.setAttribute('data-message', 'Adding user...');
+
+                const { data: result, error } = await actions.users.addUserToGroup(formData);
+
+                if (error) {
+                    addFeedback.setAttribute('data-type', 'error');
+                    addFeedback.setAttribute('data-message', `Error: ${error.message}`);
+                } else if (result?.success) {
+                    addFeedback.setAttribute('data-type', 'success');
+                    addFeedback.setAttribute('data-message', `Successfully added ${result.count} users!`);
+                    
+                    // Clear form
+                    addUserForm.reset();
+                    document.getElementById('selected-users')!.innerHTML = '';
+
+                    // Reload to update list
+                    setTimeout(() => {
+                        navigate(window.location.pathname, { history: 'replace' });
+                    }, 500);
+                }
+            });
+       }
+    });
+
+    document.addEventListener('astro:page-load', () => {
+       const addRoleForm = document.getElementById('add-role-form') as HTMLFormElement;
+       const roleFeedback = document.getElementById('add-role-feedback');
+
+       if (addRoleForm && roleFeedback) {
+            // Bind Multi-Select
+            bindMultiSelect('roleId', 'selected-roles', 'roleIds');
+
+            addRoleForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const formData = new FormData(addRoleForm);
+                
+                roleFeedback.setAttribute('data-type', 'loading');
+                roleFeedback.setAttribute('data-message', 'Adding users from role...');
+
+                const { data: result, error } = await actions.users.addUsersByRole(formData);
+
+                if (error) {
+                    roleFeedback.setAttribute('data-type', 'error');
+                    roleFeedback.setAttribute('data-message', `Error: ${error.message}`);
+                } else if (result?.success) {
+                    roleFeedback.setAttribute('data-type', 'success');
+                    roleFeedback.setAttribute('data-message', `Added ${result.count} users successfully!`);
+                    
+                    // Clear form
+                    addRoleForm.reset();
+                    document.getElementById('selected-roles')!.innerHTML = '';
+                    
+                    // Reload to update list
+                    setTimeout(() => {
+                        navigate(window.location.pathname, { history: 'replace' });
+                    }, 1000);
+                }
+            });
+       }
+
+    });
+
+    function bindMultiSelect(selectId: string, containerId: string, inputName: string) {
+        const select = document.getElementById(selectId) as HTMLSelectElement;
+        const container = document.getElementById(containerId);
+        if (!select || !container) return;
+
+        select.onchange = () => {
+             const value = select.value;
+             if (!value) return;
+
+             const option = select.options[select.selectedIndex];
+             const text = option.text;
+
+             // Check if already selected
+             if (container.querySelector(`input[value="${value}"]`)) {
+                 select.value = ""; // Reset
+                 return;
+             }
+
+             // Hide the selected option
+             option.hidden = true;
+             option.disabled = true;
+
+             // Create Tag
+             const tag = document.createElement('span');
+             tag.className = 'status-badge badge-neutral';
+             tag.innerHTML = `
+                ${text}
+                <input type="hidden" name="${inputName}" value="${value}" />
+                <span class="remove-tag" title="Remove" style="margin-left: 4px; cursor: pointer;">&times;</span>
+             `;
+
+             // Remove Logic
+             tag.querySelector('.remove-tag')?.addEventListener('click', () => {
+                 tag.remove();
+                 const currentOpt = select.querySelector(`option[value="${value}"]`) as HTMLOptionElement;
+                 if (currentOpt) {
+                     currentOpt.hidden = false;
+                     currentOpt.disabled = false;
+                 }
+             });
+
+             container.appendChild(tag);
+             select.value = ""; // Reset select
+        };
+    }
+
+    document.addEventListener('astro:page-load', () => {
+        // Handle Remove User from Group
+        document.querySelectorAll('.remove-user-from-group').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                const btnEl = e.currentTarget as HTMLElement;
+                const userId = btnEl.dataset.userId;
+                const groupId = btnEl.dataset.groupId;
+
+                if (userId && groupId) {
+                    const icon = btnEl.querySelector('svg')?.outerHTML;
+                    (window as any).stimsToast.confirm('Are you sure you want to remove this user from the group?', async () => {
+                        const { error } = await actions.users.removeUserFromGroup({ userId, groupId });
+                        if (error) {
+                            (window as any).stimsToast.show(`Error removing user: ${error.message}`, 'error');
+                        } else {
+                            (window as any).stimsToast.show('User removed from group successfully!');
+                            // Reload to update list
+                            navigate(window.location.pathname, { history: 'replace' });
+                        }
+                    }, null, 'success', icon);
+                }
+            });
+        });
+    });
+</script>
