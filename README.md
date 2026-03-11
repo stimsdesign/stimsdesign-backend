@@ -67,16 +67,16 @@ PUBLIC_APP_URL="http://localhost:4321"    # Used for local dev
 BETTER_AUTH_URL="http://localhost:4321"
 
 # BetterAuth Security Secrets
-BETTER_AUTH_SECRET="rand_gen_complex_string"
+BETTER_AUTH_SECRET=your_secure_random_string
 
 # Authentication Providers
-GOOGLE_CLIENT_ID="..."
-GOOGLE_CLIENT_SECRET="..."
-TWITTER_CLIENT_ID="..."
-TWITTER_CLIENT_SECRET="..."
+GOOGLE_CLIENT_ID=your_google_client_id
+GOOGLE_CLIENT_SECRET=your_google_client_secret
+TWITTER_CLIENT_ID=your_twitter_client_id
+TWITTER_CLIENT_SECRET=your_twitter_client_secret
 
 # Email Verification & Delivery
-RESEND_API_KEY="..."
+RESEND_API_KEY=your_resend_api_key
 SEND_EMAIL_FROM="STIMS Design <no-reply@stimsdesign.com>"
 ```
 
