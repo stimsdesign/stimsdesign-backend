@@ -68,7 +68,7 @@ const firstUserAdminPlugin = {
 };
 
 export const Auth = betterAuth({
-    baseURL: import.meta.env.BETTER_AUTH_URL,
+    baseURL: process.env.BETTER_AUTH_URL,
     database: db,
     user: {
         additionalFields: {
@@ -97,7 +97,7 @@ export const Auth = betterAuth({
         requireEmailVerification: true,
         async sendResetPassword(data: any, _request: any) {
             const { user, url } = data;
-            const useEthereal = import.meta.env.USE_ETHEREAL === "TRUE";
+            const useEthereal = process.env.USE_ETHEREAL === "TRUE";
             const { sendEmail } = await (useEthereal ? import("./dev/email-ethereal") : import("./email"));
             
             logger.log(`Sending password reset email to ${user.email} with url ${url}`);
@@ -148,7 +148,7 @@ export const Auth = betterAuth({
             }
 
             logger.log(`Sending verification email to ${user.email} with url ${url}`);
-            const useEthereal = import.meta.env.USE_ETHEREAL === "TRUE";
+            const useEthereal = process.env.USE_ETHEREAL === "TRUE";
             const { sendEmail } = await (useEthereal ? import("./dev/email-ethereal") : import("./email"));
             await sendEmail({
                 to: user.email,
@@ -175,8 +175,8 @@ export const Auth = betterAuth({
     },
     socialProviders: {
         google: {
-            clientId: import.meta.env.GOOGLE_CLIENT_ID as string,
-            clientSecret: import.meta.env.GOOGLE_CLIENT_SECRET as string,
+            clientId: process.env.GOOGLE_CLIENT_ID as string,
+            clientSecret: process.env.GOOGLE_CLIENT_SECRET as string,
             mapProfileToUser: async (profile) => {
                 let highResImage = profile.picture;
                 if (highResImage && highResImage.includes('=')) {
@@ -195,8 +195,8 @@ export const Auth = betterAuth({
             overrideUserInfoOnSignIn: true,
         },
         twitter: {
-            clientId: import.meta.env.TWITTER_CLIENT_ID as string,
-            clientSecret: import.meta.env.TWITTER_CLIENT_SECRET as string,
+            clientId: process.env.TWITTER_CLIENT_ID as string,
+            clientSecret: process.env.TWITTER_CLIENT_SECRET as string,
             mapProfileToUser: async (profile: any) => {
                 // Twitter returns a '..._normal.jpg' (usually 48x48).
                 // We replace '_normal' with '_400x400' to get a higher quality 400x400 image.

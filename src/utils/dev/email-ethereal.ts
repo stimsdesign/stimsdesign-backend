@@ -82,7 +82,7 @@ export async function sendEmail(options: SendEmailOptions): Promise<Transporter>
         const { to, subject, template } = options;
         // Parse Email Template
         const html = await parseEmailTemplate(template.name, template.params);
-        const from = import.meta.env.SEND_EMAIL_FROM;
+        const from = process.env.SEND_EMAIL_FROM as string;
         const message = { to, subject, html, from };
         // Send the email
         transporter.sendMail(message, (err, info) => {
@@ -121,14 +121,14 @@ async function getEmailTransporter(): Promise<Transporter> {
     return new Promise((resolve, _reject) => {
         // Use Resend in production
         if (import.meta.env.PROD) {
-            if (!import.meta.env.RESEND_API_KEY) {
+            if (!process.env.RESEND_API_KEY) {
                 throw new Error("Missing Resend configuration");
             }
             const transporter = createTransport({
                 host: "smtp.resend.com",
                 secure: true,
                 port: 465,
-                auth: { user: "resend", pass: import.meta.env.RESEND_API_KEY },
+                auth: { user: "resend", pass: process.env.RESEND_API_KEY as string },
             });
             resolve(transporter);
         }

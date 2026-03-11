@@ -20,7 +20,7 @@ import { logger } from "@stimsdesign/core/logger";
 
 export const GET: APIRoute = async ({ url }) => {
     const key = url.searchParams.get("key");
-    const secret = import.meta.env.STIMSDESIGN_SECRET_KEY;
+    const secret = process.env.STIMSDESIGN_SECRET_KEY;
 
     // Security: Only allow initialization if a secret key is provided and matches.
     // If no secret is configured in .env, we strictly disallow web-based init for safety.

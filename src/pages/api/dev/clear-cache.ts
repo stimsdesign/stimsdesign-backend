@@ -12,7 +12,7 @@ export const POST: APIRoute = async ({ request, url }) => {
             key = body.key; 
         } catch(e) {}
     }
-    const secret = import.meta.env.STIMSDESIGN_SECRET_KEY;
+    const secret = process.env.STIMSDESIGN_SECRET_KEY;
     logger.log(`[DEBUG] Cache clear requested. Key: "${key}", Secret: "${secret}"`);
 
     if (!secret || key !== secret) {

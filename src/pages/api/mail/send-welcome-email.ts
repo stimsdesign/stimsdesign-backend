@@ -23,7 +23,7 @@ export const prerender = false;
 
 export const POST: APIRoute = async ({ url, request, redirect }) => {
     const key = url.searchParams.get("key");
-    const secret = import.meta.env.STIMSDESIGN_SECRET_KEY;
+    const secret = process.env.STIMSDESIGN_SECRET_KEY;
 
     if (!secret || key !== secret) {
         return new Response(null, { status: 404 });
