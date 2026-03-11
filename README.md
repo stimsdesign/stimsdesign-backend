@@ -80,6 +80,27 @@ RESEND_API_KEY="..."
 SEND_EMAIL_FROM="STIMS Design <no-reply@stimsdesign.com>"
 ```
 
+## 🗄️ Database Initialization & First User Setup
+
+### 1. Database Initialization
+The database schema, required tables, and default RBAC roles (like `superadmin`, `admin`, `user`) are **automatically initialized** and synchronized during the Netlify build process via a custom Astro integration. 
+
+You can also trigger a manual declarative sync at any time from your root directory:
+```bash
+npm run db:sync
+```
+*(Note: This sync is declarative and non-destructive. It will safely add new tables/columns or drop orphaned columns without deleting your existing row data).*
+
+### 2. Setting Up the First "Superadmin"
+For security reasons, there is no public route or secret URL to instantly become a Superadmin. The very first administrative user must be elevated manually.
+
+1. Start your local development server (`npm run dev`).
+2. Navigate to `<your-local-url>/portal` in your browser and create a new user account via the standard sign-up form.
+3. Open your Neon Database Console (or your preferred Postgres client).
+4. View the `users` table and locate your newly created user record.
+5. Edit the `role` column for your user and change its value from `user` to `superadmin`.
+6. Save the changes. Refresh your browser or log in again to access the full Dashboard and User Management interfaces!
+
 ## 🛠️ Modifying the UI 
 The UI is strictly separated into Modules (e.g. `src/modules/users/`). 
 1. Create a new folder for your module `src/modules/crm/`.
