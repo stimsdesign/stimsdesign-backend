@@ -33,6 +33,8 @@ import { logger } from "@stimsdesign/core/logger";
 // Ethereal Email
 import { createTestAccount, createTransport, getTestMessageUrl } from "nodemailer";
 import type { Transporter } from "nodemailer";
+import dotenv from "dotenv";
+dotenv.config();
 
 type WelcomeEmailParams = {
     name: "welcome";

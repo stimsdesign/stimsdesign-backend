@@ -78,7 +78,20 @@ TWITTER_CLIENT_SECRET=your_twitter_client_secret
 # Email Verification & Delivery
 RESEND_API_KEY=your_resend_api_key
 SEND_EMAIL_FROM="STIMS Design <no-reply@stimsdesign.com>"
+
+# End Point Secret Key
+STIMSDESIGN_SECRET_KEY=stimsdesign
 ```
+
+## 🛡️ API Endpoint Security
+Several built-in API routes in the backend package (like health checks, database initialization, and cache clearing) are secured to prevent unauthorized abuse. You must pass your `STIMSDESIGN_SECRET_KEY` as a URL query parameter (`?key=...`) to access these routes. 
+
+If accessed without the correct key, the server will intentionally return a blank `404 Not Found` response to obfuscate the endpoints from automated scanner bots.
+
+Example usage: 
+- `https://yourdomain.com/api/health?key=stimsdesign`
+- `https://yourdomain.com/api/initialize?key=stimsdesign`
+- `https://yourdomain.com/api/dev/clear-cache?key=stimsdesign` (POST request)
 
 ## 🗄️ Database Initialization & First User Setup
 

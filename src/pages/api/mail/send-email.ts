@@ -17,6 +17,9 @@
  */
 import type { APIRoute } from "astro";
 import { sendEmail } from "../../../utils/email"
+import { logger } from "@stimsdesign/core/logger";
+import dotenv from "dotenv";
+dotenv.config();
 
 export const prerender = false;
 

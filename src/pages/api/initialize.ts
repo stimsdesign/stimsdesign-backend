@@ -17,6 +17,8 @@ export const prerender = false;
 import type { APIRoute } from 'astro';
 import { ensureDbInitialized } from '../../utils/db-init';
 import { logger } from "@stimsdesign/core/logger";
+import dotenv from "dotenv";
+dotenv.config();
 
 export const GET: APIRoute = async ({ url }) => {
     const key = url.searchParams.get("key");

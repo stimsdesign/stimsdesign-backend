@@ -20,6 +20,8 @@ import fs from "fs";
 import { logger } from "@stimsdesign/core/logger";
 // Resend Email
 import { createTransport, type Transporter } from "nodemailer";
+import dotenv from "dotenv";
+dotenv.config();
 
 
 type WelcomeEmailParams = {

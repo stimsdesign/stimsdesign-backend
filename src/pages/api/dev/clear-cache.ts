@@ -1,6 +1,8 @@
 import type { APIRoute } from 'astro';
 import { clearAllCache } from "@stimsdesign/core/db";
 import { logger } from "@stimsdesign/core/logger";
+import dotenv from "dotenv";
+dotenv.config();
 
 export const prerender = false;
 

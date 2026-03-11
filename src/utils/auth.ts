@@ -16,6 +16,9 @@
 // connectionString: import.meta.env.DATABASE_URL
 // baseURL: import.meta.env.BETTER_AUTH_URL,
 
+import dotenv from "dotenv";
+dotenv.config();
+
 import { betterAuth } from "better-auth";
 import { admin, username } from "better-auth/plugins"
 import { db } from "@stimsdesign/core/db";
